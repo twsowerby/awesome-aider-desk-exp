@@ -39,6 +39,8 @@ type DelegationMode = 'subtask' | 'subagent';
 interface AgentDefaults {
   provider: string;
   model: string;
+  commitProvider?: string;
+  commitModel?: string;
   maxIterations: number;
   minTimeBetweenToolCalls: number;
   enabledServers: string[];
@@ -59,7 +61,6 @@ interface AgentDefaults {
 
 interface ConductorConfig {
   delegationMode: DelegationMode;
-  commitModelId?: string;
   reminders?: {
     conductor?: string[];
     subagent?: string[];
@@ -490,7 +491,12 @@ export default class ConductorExtension implements Extension {
 
     if (!git.hasStagedChanges(projectDir)) return;
 
-    const message = await this.generateCommitMessage(ctx, agentId, agentName, taskDescription);
+    // Get commit provider/model from the agent profile (merged with defaults)
+    const agentProfile = this.agents.find(a => a.id === agentId) as AgentProfile & { commitProvider?: string; commitModel?: string };
+    const commitProvider = agentProfile?.commitProvider ?? agentProfile?.provider;
+    const commitModel = agentProfile?.commitModel ?? agentProfile?.model;
+
+    const message = await this.generateCommitMessage(ctx, agentId, agentName, taskDescription, commitProvider, commitModel);
     const commitResult = git.commit(projectDir, message);
     if (commitResult.success) {
       ctx.log(`[Conductor] Atomic commit (${agentId}): ${commitResult.output}`, 'info');
@@ -503,10 +509,11 @@ export default class ConductorExtension implements Extension {
     ctx: ExtensionContext,
     agentId: string,
     agentName: string,
-    taskDescription: string
+    taskDescription: string,
+    commitProvider: string | undefined,
+    commitModel: string | undefined
   ): Promise<string> {
-    const commitModelId = this.config.commitModelId;
-    if (!commitModelId) {
+    if (!commitProvider || !commitModel) {
       return this.fallbackCommitMessage(agentId, taskDescription);
     }
 
@@ -521,12 +528,16 @@ export default class ConductorExtension implements Extension {
       const systemPrompt = `You are a commit message generator. Write a concise, conventional-commits-style commit message based on the git diff. Use the format: "type: description". Types: feat, fix, refactor, style, docs, test, chore. Keep the message under 72 characters. Output ONLY the commit message, nothing else.`;
       const userPrompt = `Agent: ${agentName} (${agentId})\nTask: ${taskDescription.slice(0, 200)}\n\nDiff:\n${diffContent.slice(0, 4000)}`;
 
-      // commitModelId is a "provider/model" string (e.g. "anthropic/claude-3-5-haiku"),
-      // not an agent profile ID. Find a profile whose provider/model matches.
+      // Find a profile whose provider and model match the commit fields.
       const profiles = ctx.getProjectContext().getAgentProfiles();
-      const commitProfile = profiles.find((p: AgentProfile) => `${p.provider}/${p.model}` === commitModelId);
+      const commitProfile = profiles.find(
+        (p: AgentProfile) => p.provider === commitProvider && p.model === commitModel
+      );
       if (!commitProfile) {
-        ctx.log(`[Conductor] No agent profile found matching commitModelId "${commitModelId}", using fallback`, 'warn');
+        ctx.log(
+          `[Conductor] No agent profile found matching commitProvider "${commitProvider}" and commitModel "${commitModel}", using fallback`,
+          'warn'
+        );
         return this.fallbackCommitMessage(agentId, taskDescription);
       }
 

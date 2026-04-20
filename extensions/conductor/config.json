@@ -1,6 +1,5 @@
 {
   "delegationMode": "subtask",
-  "commitModelId": "anthropic/claude-3-5-haiku",
   "reminders": {
     "conductor": [
       "NEVER edit files directly. All code changes MUST be delegated to specialist subagents.",
@@ -15,6 +14,8 @@
   "defaults": {
     "provider": "openrouter",
     "model": "z-ai/glm-5.1",
+    "commitProvider": "qwen",
+    "commitModel": "qwen3.6-plus",
     "maxIterations": 100,
     "minTimeBetweenToolCalls": 0,
     "enabledServers": [],
