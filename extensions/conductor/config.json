@@ -12,8 +12,8 @@
     ]
   },
   "defaults": {
-    "provider": "zai-plan",
-    "model": "glm-4.7",
+    "provider": "openrouter",
+    "model": "z-ai/glm-5.1",
     "maxIterations": 100,
     "minTimeBetweenToolCalls": 0,
     "enabledServers": [],

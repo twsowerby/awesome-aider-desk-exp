@@ -458,7 +458,9 @@ export default class ConductorExtension implements Extension {
         name: taskName,
         autoApprove: this.config.defaults.autoApprove,
         activate: false,
-        sendEvent: true
+        sendEvent: true,
+        provider: profile.provider,
+        model: profile.model,
       });
 
       const subtaskContext = ctx.getProjectContext().getTask(newTask.id);

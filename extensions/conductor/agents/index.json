@@ -38,7 +38,9 @@
       "name": "├── Investigator",
       "instructionsFile": "investigator.md",
       "overrides": {
-        "useSkillsTools": true
+        "useSkillsTools": true,
+        "provider": "openrouter",
+        "model": "qwen/qwen3.6-plus"
       },
       "subagent": {
         "enabled": true,
@@ -56,7 +58,9 @@
       "overrides": {
         "useExtensionTools": true,
         "useSkillsTools": true,
-        "includeContextFiles": true
+        "includeContextFiles": true,
+        "provider": "openrouter",
+        "model": "qwen/qwen3.6-plus"
       },
       "subagent": {
         "enabled": true,
@@ -71,6 +75,10 @@
       "id": "verifier",
       "name": "├── Verifier",
       "instructionsFile": "verifier.md",
+      "overrides": {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.6-plus"
+      },
       "subagent": {
         "enabled": true,
         "contextMemory": "last-message",
@@ -129,7 +137,9 @@
       "overrides": {
         "useExtensionTools": true,
         "useSkillsTools": true,
-        "includeContextFiles": true
+        "includeContextFiles": true,
+        "provider": "openrouter",
+        "model": "qwen/qwen3.6-plus"
       },
       "subagent": {
         "enabled": true,
