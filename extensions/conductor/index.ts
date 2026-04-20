@@ -9,9 +9,11 @@ import { exec, execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
+import * as git from './git';
 
 interface AgentConfigEntry {
   id: string;
+  atomicCommit?: boolean;
   name: string;
   instructionsFile?: string;
   instructionsFileByMode?: Record<string, string>;
@@ -57,6 +59,7 @@ interface AgentDefaults {
 
 interface ConductorConfig {
   delegationMode: DelegationMode;
+  commitModelId?: string;
   reminders?: {
     conductor?: string[];
     subagent?: string[];
@@ -167,6 +170,7 @@ export default class ConductorExtension implements Extension {
   };
 
   private agents: AgentProfile[] = [];
+  private agentsConfig!: AgentsConfig;
   private config!: ConductorConfig;
   private extensionDir = '';
 
@@ -174,6 +178,8 @@ export default class ConductorExtension implements Extension {
     this.extensionDir = path.resolve(__dirname);
     try {
       this.config = loadConfig(this.extensionDir);
+      const agentsDir = path.join(this.extensionDir, 'agents');
+      this.agentsConfig = JSON.parse(fs.readFileSync(path.join(agentsDir, 'index.json'), 'utf-8'));
       this.agents = loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode);
       context.log(
         `Conductor loaded — mode: ${this.config.delegationMode}, ${this.agents.length} agents: ${this.agents.map(a => a.id).join(', ')}`,
@@ -332,6 +338,22 @@ export default class ConductorExtension implements Extension {
     return event;
   }
 
+  async onSubagentFinished(event: any, context: ExtensionContext): Promise<any> {
+    try {
+      const agentId = event.subagentProfile?.id;
+      if (!agentId) return event;
+
+      const agentConfig = this.getAgentConfigEntry(agentId);
+      if (!agentConfig?.atomicCommit) return event;
+
+      await this.performAtomicCommit(context, agentId, event.subagentProfile?.name || agentId, '');
+    } catch (e: any) {
+      context.log(`[Conductor] onSubagentFinished error: ${e.message}`, 'error');
+    }
+
+    return event;
+  }
+
   getTools(_context: ExtensionContext, _mode: string, agentProfile: AgentProfile): ToolDefinition[] {
     const tools: ToolDefinition[] = [];
     const isWorkflowAgent = Boolean(agentProfile?.id && this.agents.some(a => a.id === agentProfile.id));
@@ -440,6 +462,90 @@ export default class ConductorExtension implements Extension {
     return tools;
   }
 
+  private getAgentConfigEntry(agentId: string): AgentConfigEntry | undefined {
+    return this.agentsConfig.agents.find(a => a.id === agentId);
+  }
+
+  /**
+   * Stage all changed files and commit with an auto-generated message.
+   * Used by both onSubagentFinished (subagent mode) and delegateViaSubtask (subtask mode).
+   */
+  private async performAtomicCommit(
+    ctx: ExtensionContext,
+    agentId: string,
+    agentName: string,
+    taskDescription: string
+  ): Promise<void> {
+    const projectDir = ctx.getProjectDir();
+    if (!git.isGitRepo(projectDir)) return;
+
+    const changedFiles = git.getChangedFiles(projectDir);
+    if (changedFiles.length === 0) return;
+
+    const stageResult = git.stageFiles(projectDir);
+    if (!stageResult.success) {
+      ctx.log(`[Conductor] Failed to stage files: ${stageResult.error}`, 'error');
+      return;
+    }
+
+    if (!git.hasStagedChanges(projectDir)) return;
+
+    const message = await this.generateCommitMessage(ctx, agentId, agentName, taskDescription);
+    const commitResult = git.commit(projectDir, message);
+    if (commitResult.success) {
+      ctx.log(`[Conductor] Atomic commit (${agentId}): ${commitResult.output}`, 'info');
+    } else {
+      ctx.log(`[Conductor] Atomic commit failed (${agentId}): ${commitResult.error}`, 'error');
+    }
+  }
+
+  private async generateCommitMessage(
+    ctx: ExtensionContext,
+    agentId: string,
+    agentName: string,
+    taskDescription: string
+  ): Promise<string> {
+    const commitModelId = this.config.commitModelId;
+    if (!commitModelId) {
+      return this.fallbackCommitMessage(agentId, taskDescription);
+    }
+
+    try {
+      const taskContext = ctx.getTaskContext();
+      if (!taskContext) {
+        ctx.log('[Conductor] No task context for commit message generation, using fallback', 'warn');
+        return this.fallbackCommitMessage(agentId, taskDescription);
+      }
+
+      const diffContent = git.getDiff(ctx.getProjectDir()) || '(no diff available)';
+      const systemPrompt = `You are a commit message generator. Write a concise, conventional-commits-style commit message based on the git diff. Use the format: "type: description". Types: feat, fix, refactor, style, docs, test, chore. Keep the message under 72 characters. Output ONLY the commit message, nothing else.`;
+      const userPrompt = `Agent: ${agentName} (${agentId})\nTask: ${taskDescription.slice(0, 200)}\n\nDiff:\n${diffContent.slice(0, 4000)}`;
+
+      // commitModelId is a "provider/model" string (e.g. "anthropic/claude-3-5-haiku"),
+      // not an agent profile ID. Find a profile whose provider/model matches.
+      const profiles = ctx.getProjectContext().getAgentProfiles();
+      const commitProfile = profiles.find((p: AgentProfile) => `${p.provider}/${p.model}` === commitModelId);
+      if (!commitProfile) {
+        ctx.log(`[Conductor] No agent profile found matching commitModelId "${commitModelId}", using fallback`, 'warn');
+        return this.fallbackCommitMessage(agentId, taskDescription);
+      }
+
+      const generated = await taskContext.generateText(commitProfile, systemPrompt, userPrompt);
+      if (generated?.trim()) {
+        return generated.trim();
+      }
+    } catch (e: any) {
+      ctx.log(`[Conductor] LLM commit message generation failed: ${e.message}`, 'warn');
+    }
+
+    return this.fallbackCommitMessage(agentId, taskDescription);
+  }
+
+  private fallbackCommitMessage(agentId: string, taskDescription: string): string {
+    const shortDesc = taskDescription.slice(0, 80).split('\n')[0].trim() || 'code changes';
+    return git.generateFallbackMessage(agentId, shortDesc);
+  }
+
   /**
    * Subtask mode: creates a child task, sets agent profile, runs via runPrompt.
    * Messages persist in the subtask's context manager.
@@ -517,6 +623,12 @@ export default class ConductorExtension implements Extension {
           state: 'completed',
           completedAt: new Date().toISOString()
         });
+
+        // Atomic commit: commit changes made by this subagent if the agent has atomicCommit flag
+        const agentConfig = this.getAgentConfigEntry(profile.id);
+        if (agentConfig?.atomicCommit) {
+          await this.performAtomicCommit(ctx, profile.id, profile.name, taskDescription);
+        }
       } catch (e: any) {
         ctx.log(`[Conductor] Failed to extract subtask results or update status: ${e.message}`, 'warn');
       }

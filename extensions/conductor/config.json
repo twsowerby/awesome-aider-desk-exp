@@ -1,5 +1,6 @@
 {
   "delegationMode": "subtask",
+  "commitModelId": "anthropic/claude-3-5-haiku",
   "reminders": {
     "conductor": [
       "NEVER edit files directly. All code changes MUST be delegated to specialist subagents.",
