@@ -491,10 +491,15 @@ export default class ConductorExtension implements Extension {
 
     if (!git.hasStagedChanges(projectDir)) return;
 
-    // Get commit provider/model from the agent profile (merged with defaults)
+    // Get commit provider/model with fallback chain:
+    // 1. Per-agent override (loadAgents() spreads AgentDefaults into the profile at runtime,
+    //    so commitProvider/commitModel may exist on the profile object even though AgentProfile
+    //    doesn't declare them)
+    // 2. Config defaults (this.config.defaults.commitProvider/commitModel)
+    // 3. Agent's own provider/model as final fallback
     const agentProfile = this.agents.find(a => a.id === agentId);
-    const commitProvider = (agentProfile as AgentDefaults | undefined)?.commitProvider ?? agentProfile?.provider;
-    const commitModel = (agentProfile as AgentDefaults | undefined)?.commitModel ?? agentProfile?.model;
+    const commitProvider = (agentProfile as any)?.commitProvider ?? this.config.defaults.commitProvider ?? agentProfile?.provider;
+    const commitModel = (agentProfile as any)?.commitModel ?? this.config.defaults.commitModel ?? agentProfile?.model;
 
     const message = await this.generateCommitMessage(ctx, agentId, agentName, taskDescription, commitProvider, commitModel);
     const commitResult = git.commit(projectDir, message);
