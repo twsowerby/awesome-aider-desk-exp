@@ -14,8 +14,8 @@
   "defaults": {
     "provider": "openrouter",
     "model": "z-ai/glm-5.1",
-    "commitProvider": "qwen",
-    "commitModel": "qwen3.6-plus",
+    "commitProvider": "openrouter",
+    "commitModel": "google/gemini-3-flash-preview",
     "maxIterations": 100,
     "minTimeBetweenToolCalls": 0,
     "enabledServers": [],

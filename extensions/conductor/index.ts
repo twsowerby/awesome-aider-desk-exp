@@ -2,6 +2,7 @@ import type {
   AgentProfile,
   Extension,
   ExtensionContext,
+  SubagentFinishedEvent,
   ToolDefinition,
   UIComponentDefinition
 } from '@aiderdesk/extensions';
@@ -10,6 +11,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
 import * as git from './git';
+
+interface ConductorAgentProfile extends AgentProfile {
+  commitProvider?: string;
+  commitModel?: string;
+}
 
 interface AgentConfigEntry {
   id: string;
@@ -339,7 +345,7 @@ export default class ConductorExtension implements Extension {
     return event;
   }
 
-  async onSubagentFinished(event: any, context: ExtensionContext): Promise<any> {
+  async onSubagentFinished(event: SubagentFinishedEvent, context: ExtensionContext): Promise<void | Partial<SubagentFinishedEvent>> {
     try {
       const agentId = event.subagentProfile?.id;
       if (!agentId) return event;
@@ -348,8 +354,9 @@ export default class ConductorExtension implements Extension {
       if (!agentConfig?.atomicCommit) return event;
 
       await this.performAtomicCommit(context, agentId, event.subagentProfile?.name || agentId, '');
-    } catch (e: any) {
-      context.log(`[Conductor] onSubagentFinished error: ${e.message}`, 'error');
+    } catch (e: unknown) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      context.log(`[Conductor] onSubagentFinished error: ${errorMessage}`, 'error');
     }
 
     return event;
@@ -498,8 +505,8 @@ export default class ConductorExtension implements Extension {
     // 2. Config defaults (this.config.defaults.commitProvider/commitModel)
     // 3. Agent's own provider/model as final fallback
     const agentProfile = this.agents.find(a => a.id === agentId);
-    const commitProvider = (agentProfile as any)?.commitProvider ?? this.config.defaults.commitProvider ?? agentProfile?.provider;
-    const commitModel = (agentProfile as any)?.commitModel ?? this.config.defaults.commitModel ?? agentProfile?.model;
+    const commitProvider = (agentProfile as ConductorAgentProfile)?.commitProvider ?? this.config.defaults.commitProvider ?? agentProfile?.provider;
+    const commitModel = (agentProfile as ConductorAgentProfile)?.commitModel ?? this.config.defaults.commitModel ?? agentProfile?.model;
 
     const message = await this.generateCommitMessage(ctx, agentId, agentName, taskDescription, commitProvider, commitModel);
     const commitResult = git.commit(projectDir, message);
@@ -550,8 +557,9 @@ export default class ConductorExtension implements Extension {
       if (generated?.trim()) {
         return generated.trim();
       }
-    } catch (e: any) {
-      ctx.log(`[Conductor] LLM commit message generation failed: ${e.message}`, 'warn');
+    } catch (e: unknown) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      ctx.log(`[Conductor] LLM commit message generation failed: ${errorMessage}`, 'warn');
     }
 
     return this.fallbackCommitMessage(agentId, taskDescription);
@@ -645,8 +653,9 @@ export default class ConductorExtension implements Extension {
         if (agentConfig?.atomicCommit) {
           await this.performAtomicCommit(ctx, profile.id, profile.name, taskDescription);
         }
-      } catch (e: any) {
-        ctx.log(`[Conductor] Failed to extract subtask results or update status: ${e.message}`, 'warn');
+      } catch (e: unknown) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        ctx.log(`[Conductor] Failed to extract subtask results or update status: ${errorMessage}`, 'warn');
       }
 
       return {
