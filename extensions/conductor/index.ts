@@ -2,6 +2,7 @@ import type {
   AgentProfile,
   Extension,
   ExtensionContext,
+  ImportantRemindersEvent,
   SubagentFinishedEvent,
   ToolDefinition,
   UIComponentDefinition
@@ -12,6 +13,7 @@ import * as path from 'path';
 import { z } from 'zod';
 import * as git from './git';
 
+/** Extended profile that includes commit-specific model config. These fields are injected at runtime by loadAgents() spreading AgentDefaults, which is why they require a cast. */
 interface ConductorAgentProfile extends AgentProfile {
   commitProvider?: string;
   commitModel?: string;
@@ -192,8 +194,9 @@ export default class ConductorExtension implements Extension {
         `Conductor loaded — mode: ${this.config.delegationMode}, ${this.agents.length} agents: ${this.agents.map(a => a.id).join(', ')}`,
         'info'
       );
-    } catch (e: any) {
-      context.log(`Conductor extension failed to load: ${e.message}`, 'error');
+    } catch (e: unknown) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      context.log(`Conductor extension failed to load: ${errorMessage}`, 'error');
     }
   }
 
@@ -318,7 +321,10 @@ export default class ConductorExtension implements Extension {
     return updatedProfile;
   }
 
-  async onImportantReminders(event: any, _context: ExtensionContext): Promise<any> {
+  async onImportantReminders(
+    event: ImportantRemindersEvent,
+    _context: ExtensionContext
+  ): Promise<void | Partial<ImportantRemindersEvent>> {
     try {
       if (this.config.reminders) {
         let reminders: string[] = [];
@@ -338,8 +344,9 @@ export default class ConductorExtension implements Extension {
           }
         }
       }
-    } catch (e) {
-      _context.log(`[Conductor] Failed to process reminders: ${e}`, 'warn');
+    } catch (e: unknown) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      _context.log(`[Conductor] Failed to process reminders: ${errorMessage}`, 'warn');
     }
 
     return event;
@@ -666,10 +673,11 @@ export default class ConductorExtension implements Extension {
           }
         ]
       };
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
       return {
         isError: true,
-        content: [{ type: 'text' as const, text: `Error delegating to ${profile.name}: ${e.message}` }]
+        content: [{ type: 'text' as const, text: `Error delegating to ${profile.name}: ${errorMessage}` }]
       };
     }
   }
