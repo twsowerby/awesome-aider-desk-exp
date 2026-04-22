@@ -76,6 +76,28 @@ interface ConductorConfig {
   defaults: AgentDefaults;
 }
 
+/**
+ * Recursively merges object b over object a.
+ * - For plain objects, recurse.
+ * - For arrays, primitives, and null: b replaces a entirely.
+ * - If b key is undefined, keep a's value.
+ * Returns a new object.
+ */
+function deepMerge(a: any, b: any): any {
+  if (b === undefined) return a;
+  if (a === null || typeof a !== 'object' || Array.isArray(a) ||
+      b === null || typeof b !== 'object' || Array.isArray(b)) {
+    return b;
+  }
+
+  const result = { ...a };
+  for (const key of Object.keys(b)) {
+    if (b[key] === undefined) continue;
+    result[key] = deepMerge(a[key], b[key]);
+  }
+  return result;
+}
+
 function resolveSpecDir(ctx: ExtensionContext): string {
   const taskContext = ctx.getTaskContext()!;
   let taskId = taskContext.data.id;
@@ -91,7 +113,7 @@ function resolveSpecDir(ctx: ExtensionContext): string {
   return path.join(ctx.getProjectDir(), '.aider-desk', 'tasks', taskId);
 }
 
-function loadAgents(extensionDir: string, configDefaults: AgentDefaults, delegationMode: string): AgentProfile[] {
+function loadAgents(extensionDir: string, configDefaults: AgentDefaults, delegationMode: string, localAgentOverrides?: Record<string, Record<string, unknown>>): AgentProfile[] {
   const agentsDir = path.join(extensionDir, 'agents');
   const configPath = path.join(agentsDir, 'index.json');
 
@@ -114,9 +136,12 @@ function loadAgents(extensionDir: string, configDefaults: AgentDefaults, delegat
       ...(entry.overridesByMode?.[delegationMode] || {})
     };
 
+    const localOverrides = localAgentOverrides?.[entry.id];
+    const finalOverrides = localOverrides ? deepMerge(mergedOverrides, localOverrides) : mergedOverrides;
+
     return {
       ...configDefaults,
-      ...mergedOverrides,
+      ...finalOverrides,
       id: entry.id,
       name: entry.name,
       customInstructions: instructions,
@@ -138,6 +163,15 @@ function applyModePlaceholders(instructions: string, mode: string): string {
 function loadConfig(extensionDir: string): ConductorConfig {
   const configPath = path.join(extensionDir, 'config.json');
   const raw = fs.readFileSync(configPath, 'utf-8');
+  return JSON.parse(raw);
+}
+
+function loadLocalConfig(projectDir: string): { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } | null {
+  const localConfigPath = path.join(projectDir, '.aider-desk', 'conductor.json');
+  if (!fs.existsSync(localConfigPath)) {
+    return null;
+  }
+  const raw = fs.readFileSync(localConfigPath, 'utf-8');
   return JSON.parse(raw);
 }
 
@@ -181,19 +215,36 @@ export default class ConductorExtension implements Extension {
   private agents: AgentProfile[] = [];
   private agentsConfig!: AgentsConfig;
   private config!: ConductorConfig;
+  private localConfig: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } | null = null;
   private extensionDir = '';
 
   async onLoad(context: ExtensionContext): Promise<void> {
     this.extensionDir = path.resolve(__dirname);
     try {
       this.config = loadConfig(this.extensionDir);
+
+      // Load local project-level config override
+      this.localConfig = loadLocalConfig(context.getProjectDir());
+      if (this.localConfig?.defaults) {
+        this.config.defaults = deepMerge(this.config.defaults, this.localConfig.defaults) as AgentDefaults;
+      }
+
       const agentsDir = path.join(this.extensionDir, 'agents');
       this.agentsConfig = JSON.parse(fs.readFileSync(path.join(agentsDir, 'index.json'), 'utf-8'));
-      this.agents = loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode);
-      context.log(
-        `Conductor loaded — mode: ${this.config.delegationMode}, ${this.agents.length} agents: ${this.agents.map(a => a.id).join(', ')}`,
-        'info'
-      );
+      this.agents = loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode, this.localConfig?.agents);
+
+      if (this.localConfig) {
+        const overriddenAgents = Object.keys(this.localConfig.agents || {});
+        context.log(
+          `Conductor: local config loaded from .aider-desk/conductor.json — defaults overridden${overriddenAgents.length > 0 ? `, agents: ${overriddenAgents.join(', ')}` : ''}`,
+          'info'
+        );
+      } else {
+        context.log(
+          `Conductor loaded — mode: ${this.config.delegationMode}, ${this.agents.length} agents: ${this.agents.map(a => a.id).join(', ')}`,
+          'info'
+        );
+      }
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       context.log(`Conductor extension failed to load: ${errorMessage}`, 'error');
