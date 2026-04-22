@@ -93,6 +93,7 @@ function deepMerge<T>(target: T, source: any): T {
 
   const result = { ...target } as any;
   for (const key of Object.keys(source)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
     result[key] = deepMerge(result[key], source[key]);
   }
   return result;
@@ -223,7 +224,14 @@ export default class ConductorExtension implements Extension {
       this.config = loadConfig(this.extensionDir);
 
       // Apply local project-level overrides
-      const local = loadLocalConfig(context.getProjectDir());
+      let local: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } | null = null;
+      try {
+        local = loadLocalConfig(context.getProjectDir());
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        context.log(`[Conductor] failed to load local config: ${msg}`, 'warn');
+      }
+
       if (local) {
         if (local.defaults) {
           this.config.defaults = deepMerge(this.config.defaults, local.defaults);
@@ -231,12 +239,12 @@ export default class ConductorExtension implements Extension {
         
         const overriddenAgents = Object.keys(local.agents || {});
         context.log(
-          `Conductor: loaded local config from .aider-desk/conductor.json (overrides: defaults${overriddenAgents.length > 0 ? `, agents: ${overriddenAgents.join(', ')}` : ''})`,
+          `[Conductor] loaded local config from .aider-desk/conductor.json (overrides: defaults${overriddenAgents.length > 0 ? `, agents: ${overriddenAgents.join(', ')}` : ''})`,
           'info'
         );
       } else {
         context.log(
-          `Conductor: loaded (mode: ${this.config.delegationMode}, agents: ${loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode).length})`,
+          `[Conductor] loaded (mode: ${this.config.delegationMode}, agents: ${loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode).length})`,
           'info'
         );
       }
@@ -246,7 +254,7 @@ export default class ConductorExtension implements Extension {
       this.agents = loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode, local?.agents);
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
-      context.log(`Conductor extension failed to load: ${errorMessage}`, 'error');
+      context.log(`[Conductor] extension failed to load: ${errorMessage}`, 'error');
     }
   }
 
