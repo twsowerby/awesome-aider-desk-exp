@@ -38,7 +38,9 @@
       "name": "├── Investigator",
       "instructionsFile": "investigator.md",
       "overrides": {
-        "useSkillsTools": true
+        "useSkillsTools": true,
+        "provider": "openrouter",
+        "model": "google/gemini-3-flash-preview"
       },
       "subagent": {
         "enabled": true,
@@ -51,12 +53,15 @@
     },
     {
       "id": "implementor",
+      "atomicCommit": true,
       "name": "├── Implementor",
       "instructionsFile": "implementor.md",
       "overrides": {
         "useExtensionTools": true,
         "useSkillsTools": true,
-        "includeContextFiles": true
+        "includeContextFiles": true,
+        "provider": "openrouter",
+        "model": "google/gemini-3-flash-preview"
       },
       "subagent": {
         "enabled": true,
@@ -71,6 +76,10 @@
       "id": "verifier",
       "name": "├── Verifier",
       "instructionsFile": "verifier.md",
+      "overrides": {
+        "provider": "openrouter",
+        "model": "google/gemini-3-flash-preview"
+      },
       "subagent": {
         "enabled": true,
         "contextMemory": "last-message",
@@ -95,6 +104,7 @@
     },
     {
       "id": "debugger",
+      "atomicCommit": true,
       "name": "├── Debugger",
       "instructionsFile": "debugger.md",
       "overrides": {
@@ -124,12 +134,15 @@
     },
     {
       "id": "simplifier",
+      "atomicCommit": true,
       "name": "└── Simplifier",
       "instructionsFile": "simplifier.md",
       "overrides": {
         "useExtensionTools": true,
         "useSkillsTools": true,
-        "includeContextFiles": true
+        "includeContextFiles": true,
+        "provider": "openrouter",
+        "model": "google/gemini-3-flash-preview"
       },
       "subagent": {
         "enabled": true,

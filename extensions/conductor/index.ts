@@ -2,6 +2,8 @@ import type {
   AgentProfile,
   Extension,
   ExtensionContext,
+  ImportantRemindersEvent,
+  SubagentFinishedEvent,
   ToolDefinition,
   UIComponentDefinition
 } from '@aiderdesk/extensions';
@@ -9,9 +11,17 @@ import { exec, execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
+import * as git from './git';
+
+/** Extended profile that includes commit-specific model config. These fields are injected at runtime by loadAgents() spreading AgentDefaults, which is why they require a cast. */
+interface ConductorAgentProfile extends AgentProfile {
+  commitProvider?: string;
+  commitModel?: string;
+}
 
 interface AgentConfigEntry {
   id: string;
+  atomicCommit?: boolean;
   name: string;
   instructionsFile?: string;
   instructionsFileByMode?: Record<string, string>;
@@ -37,6 +47,8 @@ type DelegationMode = 'subtask' | 'subagent';
 interface AgentDefaults {
   provider: string;
   model: string;
+  commitProvider?: string;
+  commitModel?: string;
   maxIterations: number;
   minTimeBetweenToolCalls: number;
   enabledServers: string[];
@@ -167,6 +179,7 @@ export default class ConductorExtension implements Extension {
   };
 
   private agents: AgentProfile[] = [];
+  private agentsConfig!: AgentsConfig;
   private config!: ConductorConfig;
   private extensionDir = '';
 
@@ -174,13 +187,16 @@ export default class ConductorExtension implements Extension {
     this.extensionDir = path.resolve(__dirname);
     try {
       this.config = loadConfig(this.extensionDir);
+      const agentsDir = path.join(this.extensionDir, 'agents');
+      this.agentsConfig = JSON.parse(fs.readFileSync(path.join(agentsDir, 'index.json'), 'utf-8'));
       this.agents = loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode);
       context.log(
         `Conductor loaded — mode: ${this.config.delegationMode}, ${this.agents.length} agents: ${this.agents.map(a => a.id).join(', ')}`,
         'info'
       );
-    } catch (e: any) {
-      context.log(`Conductor extension failed to load: ${e.message}`, 'error');
+    } catch (e: unknown) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      context.log(`Conductor extension failed to load: ${errorMessage}`, 'error');
     }
   }
 
@@ -305,7 +321,10 @@ export default class ConductorExtension implements Extension {
     return updatedProfile;
   }
 
-  async onImportantReminders(event: any, _context: ExtensionContext): Promise<any> {
+  async onImportantReminders(
+    event: ImportantRemindersEvent,
+    _context: ExtensionContext
+  ): Promise<void | Partial<ImportantRemindersEvent>> {
     try {
       if (this.config.reminders) {
         let reminders: string[] = [];
@@ -325,8 +344,26 @@ export default class ConductorExtension implements Extension {
           }
         }
       }
-    } catch (e) {
-      _context.log(`[Conductor] Failed to process reminders: ${e}`, 'warn');
+    } catch (e: unknown) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      _context.log(`[Conductor] Failed to process reminders: ${errorMessage}`, 'warn');
+    }
+
+    return event;
+  }
+
+  async onSubagentFinished(event: SubagentFinishedEvent, context: ExtensionContext): Promise<void | Partial<SubagentFinishedEvent>> {
+    try {
+      const agentId = event.subagentProfile?.id;
+      if (!agentId) return event;
+
+      const agentConfig = this.getAgentConfigEntry(agentId);
+      if (!agentConfig?.atomicCommit) return event;
+
+      await this.performAtomicCommit(context, agentId, event.subagentProfile?.name || agentId, '');
+    } catch (e: unknown) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      context.log(`[Conductor] onSubagentFinished error: ${errorMessage}`, 'error');
     }
 
     return event;
@@ -440,6 +477,106 @@ export default class ConductorExtension implements Extension {
     return tools;
   }
 
+  private getAgentConfigEntry(agentId: string): AgentConfigEntry | undefined {
+    return this.agentsConfig.agents.find(a => a.id === agentId);
+  }
+
+  /**
+   * Stage all changed files and commit with an auto-generated message.
+   * Used by both onSubagentFinished (subagent mode) and delegateViaSubtask (subtask mode).
+   */
+  private async performAtomicCommit(
+    ctx: ExtensionContext,
+    agentId: string,
+    agentName: string,
+    taskDescription: string
+  ): Promise<void> {
+    const projectDir = ctx.getProjectDir();
+    if (!git.isGitRepo(projectDir)) return;
+
+    const changedFiles = git.getChangedFiles(projectDir);
+    if (changedFiles.length === 0) return;
+
+    const stageResult = git.stageFiles(projectDir);
+    if (!stageResult.success) {
+      ctx.log(`[Conductor] Failed to stage files: ${stageResult.error}`, 'error');
+      return;
+    }
+
+    if (!git.hasStagedChanges(projectDir)) return;
+
+    // Get commit provider/model with fallback chain:
+    // 1. Per-agent override (loadAgents() spreads AgentDefaults into the profile at runtime,
+    //    so commitProvider/commitModel may exist on the profile object even though AgentProfile
+    //    doesn't declare them)
+    // 2. Config defaults (this.config.defaults.commitProvider/commitModel)
+    // 3. Agent's own provider/model as final fallback
+    const agentProfile = this.agents.find(a => a.id === agentId);
+    const commitProvider = (agentProfile as ConductorAgentProfile)?.commitProvider ?? this.config.defaults.commitProvider ?? agentProfile?.provider;
+    const commitModel = (agentProfile as ConductorAgentProfile)?.commitModel ?? this.config.defaults.commitModel ?? agentProfile?.model;
+
+    const message = await this.generateCommitMessage(ctx, agentId, agentName, taskDescription, commitProvider, commitModel);
+    const commitResult = git.commit(projectDir, message);
+    if (commitResult.success) {
+      ctx.log(`[Conductor] Atomic commit (${agentId}): ${commitResult.output}`, 'info');
+    } else {
+      ctx.log(`[Conductor] Atomic commit failed (${agentId}): ${commitResult.error}`, 'error');
+    }
+  }
+
+  private async generateCommitMessage(
+    ctx: ExtensionContext,
+    agentId: string,
+    agentName: string,
+    taskDescription: string,
+    commitProvider: string | undefined,
+    commitModel: string | undefined
+  ): Promise<string> {
+    if (!commitProvider || !commitModel) {
+      return this.fallbackCommitMessage(agentId, taskDescription);
+    }
+
+    try {
+      const taskContext = ctx.getTaskContext();
+      if (!taskContext) {
+        ctx.log('[Conductor] No task context for commit message generation, using fallback', 'warn');
+        return this.fallbackCommitMessage(agentId, taskDescription);
+      }
+
+      const diffContent = git.getDiff(ctx.getProjectDir()) || '(no diff available)';
+      const systemPrompt = `You are a commit message generator. Write a concise, conventional-commits-style commit message based on the git diff. Use the format: "type: description". Types: feat, fix, refactor, style, docs, test, chore. Keep the message under 72 characters. Output ONLY the commit message, nothing else.`;
+      const userPrompt = `Agent: ${agentName} (${agentId})\nTask: ${taskDescription.slice(0, 200)}\n\nDiff:\n${diffContent.slice(0, 4000)}`;
+
+      // Find a profile whose provider and model match the commit fields.
+      const profiles = ctx.getProjectContext().getAgentProfiles();
+      const commitProfile = profiles.find(
+        (p: AgentProfile) => p.provider === commitProvider && p.model === commitModel
+      );
+      if (!commitProfile) {
+        ctx.log(
+          `[Conductor] No agent profile found matching commitProvider "${commitProvider}" and commitModel "${commitModel}", using fallback`,
+          'warn'
+        );
+        return this.fallbackCommitMessage(agentId, taskDescription);
+      }
+
+      const generated = await taskContext.generateText(commitProfile, systemPrompt, userPrompt);
+      if (generated?.trim()) {
+        return generated.trim();
+      }
+    } catch (e: unknown) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      ctx.log(`[Conductor] LLM commit message generation failed: ${errorMessage}`, 'warn');
+    }
+
+    return this.fallbackCommitMessage(agentId, taskDescription);
+  }
+
+  private fallbackCommitMessage(agentId: string, taskDescription: string): string {
+    const shortDesc = taskDescription.slice(0, 80).split('\n')[0].trim() || 'code changes';
+    return git.generateFallbackMessage(agentId, shortDesc);
+  }
+
   /**
    * Subtask mode: creates a child task, sets agent profile, runs via runPrompt.
    * Messages persist in the subtask's context manager.
@@ -458,7 +595,9 @@ export default class ConductorExtension implements Extension {
         name: taskName,
         autoApprove: this.config.defaults.autoApprove,
         activate: false,
-        sendEvent: true
+        sendEvent: true,
+        provider: profile.provider,
+        model: profile.model,
       });
 
       const subtaskContext = ctx.getProjectContext().getTask(newTask.id);
@@ -515,8 +654,15 @@ export default class ConductorExtension implements Extension {
           state: 'completed',
           completedAt: new Date().toISOString()
         });
-      } catch (e: any) {
-        ctx.log(`[Conductor] Failed to extract subtask results or update status: ${e.message}`, 'warn');
+
+        // Atomic commit: commit changes made by this subagent if the agent has atomicCommit flag
+        const agentConfig = this.getAgentConfigEntry(profile.id);
+        if (agentConfig?.atomicCommit) {
+          await this.performAtomicCommit(ctx, profile.id, profile.name, taskDescription);
+        }
+      } catch (e: unknown) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        ctx.log(`[Conductor] Failed to extract subtask results or update status: ${errorMessage}`, 'warn');
       }
 
       return {
@@ -527,10 +673,11 @@ export default class ConductorExtension implements Extension {
           }
         ]
       };
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
       return {
         isError: true,
-        content: [{ type: 'text' as const, text: `Error delegating to ${profile.name}: ${e.message}` }]
+        content: [{ type: 'text' as const, text: `Error delegating to ${profile.name}: ${errorMessage}` }]
       };
     }
   }
