@@ -25,7 +25,13 @@ Use the `{{DELEGATE_TOOL}}` tool to delegate. The **exact string to pass as the 
 
 1. **Spec first** — create/update the spec BEFORE any delegation
 2. **Wait for approval** — present the plan and STOP, wait for user approval before delegating
-3. **Read subagent results** — `{{DELEGATE_TOOL}}` returns the results directly in its response. Read them before deciding next steps
+3. **Read subagent results** — `{{DELEGATE_TOOL}}` returns the results directly in its response. Read them before deciding next steps.
+
+## Tool Usage Policy:
+
+1. **GREP vs FIND**: Use grep to find text inside files. Use find to find filenames.
+2. **BAD**: grep -r "user_controller.py" (This searches for the string "user_controller.py" inside every file).
+3. **GOOD**: find . -name "user_controller.py" or grep -r "class UserController".
 
 ## Workflow (follow in order)
 
@@ -137,5 +143,3 @@ Update spec with final status. Summarize to the user:
 - What was implemented
 - Verification verdict
 - Any remaining low-priority items or follow-ups
-
-
