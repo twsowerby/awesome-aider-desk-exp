@@ -590,20 +590,21 @@ export default class ConductorExtension implements Extension {
     commitProvider: string | undefined,
     commitModel: string | undefined
   ): Promise<string> {
+    const sanitizedAgentName = agentName.replace(/^[\u2500-\u257F ]+/, '').trim().toLowerCase() || agentId;
+
     if (!commitProvider || !commitModel) {
-      return this.fallbackCommitMessage(agentId, taskDescription);
+      return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
     }
 
     try {
       const taskContext = ctx.getTaskContext();
       if (!taskContext) {
         ctx.log('[Conductor] No task context for commit message generation, using fallback', 'warn');
-        return this.fallbackCommitMessage(agentId, taskDescription);
+        return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
       }
 
       const diffContent = git.getDiff(ctx.getProjectDir()) || '(no diff available)';
       const systemPrompt = `You are a commit message generator. Write a concise, conventional-commits-style commit message based on the git diff. Use the format: "type(agent): description" where agent is the lowercase agent name. Types: feat, fix, refactor, style, docs, test, chore. Examples: "feat(implementor): add user authentication", "fix(debugger): resolve null pointer in parser", "refactor(simplifier): extract validation into shared module". Keep the message under 72 characters. Output ONLY the commit message, nothing else.`;
-      const sanitizedAgentName = agentName.replace(/^[├└│─ ]+/, '').trim().toLowerCase() || agentId;
       const userPrompt = `Agent: ${sanitizedAgentName}\nTask: ${taskDescription.slice(0, 200)}\n\nDiff:\n${diffContent.slice(0, 4000)}`;
 
       // Find a profile whose provider and model match the commit fields.
@@ -616,7 +617,7 @@ export default class ConductorExtension implements Extension {
           `[Conductor] No agent profile found matching commitProvider "${commitProvider}" and commitModel "${commitModel}", using fallback`,
           'warn'
         );
-        return this.fallbackCommitMessage(agentId, taskDescription);
+        return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
       }
 
       const generated = await taskContext.generateText(commitProfile, systemPrompt, userPrompt);
@@ -628,12 +629,12 @@ export default class ConductorExtension implements Extension {
       ctx.log(`[Conductor] LLM commit message generation failed: ${errorMessage}`, 'warn');
     }
 
-    return this.fallbackCommitMessage(agentId, taskDescription);
+    return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
   }
 
-  private fallbackCommitMessage(agentId: string, taskDescription: string): string {
+  private fallbackCommitMessage(sanitizedAgentName: string, taskDescription: string): string {
     const shortDesc = taskDescription.slice(0, 80).split('\n')[0].trim() || 'code changes';
-    return git.generateFallbackMessage(agentId, shortDesc);
+    return git.generateFallbackMessage(sanitizedAgentName, shortDesc);
   }
 
   /**
