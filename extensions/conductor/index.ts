@@ -602,8 +602,9 @@ export default class ConductorExtension implements Extension {
       }
 
       const diffContent = git.getDiff(ctx.getProjectDir()) || '(no diff available)';
-      const systemPrompt = `You are a commit message generator. Write a concise, conventional-commits-style commit message based on the git diff. Use the format: "type: description". Types: feat, fix, refactor, style, docs, test, chore. Keep the message under 72 characters. Output ONLY the commit message, nothing else.`;
-      const userPrompt = `Agent: ${agentName} (${agentId})\nTask: ${taskDescription.slice(0, 200)}\n\nDiff:\n${diffContent.slice(0, 4000)}`;
+      const systemPrompt = `You are a commit message generator. Write a concise, conventional-commits-style commit message based on the git diff. Use the format: "type(agent): description" where agent is the lowercase agent name. Types: feat, fix, refactor, style, docs, test, chore. Examples: "feat(implementor): add user authentication", "fix(debugger): resolve null pointer in parser", "refactor(simplifier): extract validation into shared module". Keep the message under 72 characters. Output ONLY the commit message, nothing else.`;
+      const sanitizedAgentName = agentName.replace(/^[├└│─ ]+/, '').trim().toLowerCase() || agentId;
+      const userPrompt = `Agent: ${sanitizedAgentName}\nTask: ${taskDescription.slice(0, 200)}\n\nDiff:\n${diffContent.slice(0, 4000)}`;
 
       // Find a profile whose provider and model match the commit fields.
       const profiles = ctx.getProjectContext().getAgentProfiles();
