@@ -77,23 +77,23 @@ interface ConductorConfig {
 }
 
 /**
- * Recursively merges object b over object a.
- * - For plain objects, recurse.
- * - For arrays, primitives, and null: b replaces a entirely.
- * - If b key is undefined, keep a's value.
- * Returns a new object.
+ * Recursively merges two objects.
+ * For primitives, arrays, or nulls, the second value replaces the first.
+ * For plain objects, keys are merged recursively.
  */
-function deepMerge(a: any, b: any): any {
-  if (b === undefined) return a;
-  if (a === null || typeof a !== 'object' || Array.isArray(a) ||
-      b === null || typeof b !== 'object' || Array.isArray(b)) {
-    return b;
+function deepMerge<T>(target: T, source: any): T {
+  if (source === undefined) return target;
+  
+  const isObject = (val: any): val is Record<string, any> => 
+    val !== null && typeof val === 'object' && !Array.isArray(val);
+
+  if (!isObject(target) || !isObject(source)) {
+    return source;
   }
 
-  const result = { ...a };
-  for (const key of Object.keys(b)) {
-    if (b[key] === undefined) continue;
-    result[key] = deepMerge(a[key], b[key]);
+  const result = { ...target } as any;
+  for (const key of Object.keys(source)) {
+    result[key] = deepMerge(result[key], source[key]);
   }
   return result;
 }
@@ -215,7 +215,6 @@ export default class ConductorExtension implements Extension {
   private agents: AgentProfile[] = [];
   private agentsConfig!: AgentsConfig;
   private config!: ConductorConfig;
-  private localConfig: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } | null = null;
   private extensionDir = '';
 
   async onLoad(context: ExtensionContext): Promise<void> {
@@ -223,28 +222,28 @@ export default class ConductorExtension implements Extension {
     try {
       this.config = loadConfig(this.extensionDir);
 
-      // Load local project-level config override
-      this.localConfig = loadLocalConfig(context.getProjectDir());
-      if (this.localConfig?.defaults) {
-        this.config.defaults = deepMerge(this.config.defaults, this.localConfig.defaults) as AgentDefaults;
-      }
-
-      const agentsDir = path.join(this.extensionDir, 'agents');
-      this.agentsConfig = JSON.parse(fs.readFileSync(path.join(agentsDir, 'index.json'), 'utf-8'));
-      this.agents = loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode, this.localConfig?.agents);
-
-      if (this.localConfig) {
-        const overriddenAgents = Object.keys(this.localConfig.agents || {});
+      // Apply local project-level overrides
+      const local = loadLocalConfig(context.getProjectDir());
+      if (local) {
+        if (local.defaults) {
+          this.config.defaults = deepMerge(this.config.defaults, local.defaults);
+        }
+        
+        const overriddenAgents = Object.keys(local.agents || {});
         context.log(
-          `Conductor: local config loaded from .aider-desk/conductor.json — defaults overridden${overriddenAgents.length > 0 ? `, agents: ${overriddenAgents.join(', ')}` : ''}`,
+          `Conductor: loaded local config from .aider-desk/conductor.json (overrides: defaults${overriddenAgents.length > 0 ? `, agents: ${overriddenAgents.join(', ')}` : ''})`,
           'info'
         );
       } else {
         context.log(
-          `Conductor loaded — mode: ${this.config.delegationMode}, ${this.agents.length} agents: ${this.agents.map(a => a.id).join(', ')}`,
+          `Conductor: loaded (mode: ${this.config.delegationMode}, agents: ${loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode).length})`,
           'info'
         );
       }
+
+      const agentsDir = path.join(this.extensionDir, 'agents');
+      this.agentsConfig = JSON.parse(fs.readFileSync(path.join(agentsDir, 'index.json'), 'utf-8'));
+      this.agents = loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode, local?.agents);
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       context.log(`Conductor extension failed to load: ${errorMessage}`, 'error');
