@@ -271,6 +271,7 @@ export default class ConductorExtension implements Extension {
   private agents: AgentProfile[] = [];
   private agentsConfig!: AgentsConfig;
   private config!: ConductorConfig;
+  private baseConfig!: ConductorConfig;
   private extensionDir = '';
   private localConfig: {
     reflection?: { enabled?: boolean; interval?: number };
@@ -285,12 +286,18 @@ export default class ConductorExtension implements Extension {
     this.extensionDir = path.resolve(__dirname);
     try {
       this.config = loadConfig(this.extensionDir);
+      this.baseConfig = JSON.parse(JSON.stringify(this.config));
 
       const agentsDir = path.join(this.extensionDir, 'agents');
       this.agentsConfig = JSON.parse(fs.readFileSync(path.join(agentsDir, 'index.json'), 'utf-8'));
 
       // Refresh agents for the current project directory
       this.refreshAgents(context, context.getProjectDir());
+
+      // Ensure agents are loaded even if refreshAgents returned early (no project dir)
+      if (this.agents.length === 0 && this.config) {
+        this.agents = loadAgents(this.extensionDir, { ...this.config.defaults }, this.config.delegationMode);
+      }
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       context.log(`[Conductor] extension failed to load: ${errorMessage}`, 'error');
@@ -298,6 +305,7 @@ export default class ConductorExtension implements Extension {
   }
 
   private refreshAgents(context: ExtensionContext, projectDir: string): void {
+    if (!this.config) return;
     if (!projectDir) return;
     this.stepCount.clear();
     this.lastReflectionStep.clear();
@@ -317,9 +325,9 @@ export default class ConductorExtension implements Extension {
     }
 
     // Merge reflection config
-    if (local?.reflection) {
-      this.config.reflection = deepMerge({ ...this.config.reflection }, local.reflection) as any;
-    }
+    const mergedReflection = local?.reflection
+      ? (deepMerge({ ...this.baseConfig.reflection }, local.reflection) as any)
+      : { ...this.baseConfig.reflection };
 
     // Merge defaults
     const mergedDefaults = local?.defaults
@@ -331,6 +339,9 @@ export default class ConductorExtension implements Extension {
 
     // Rebuild agents with the correct local overrides
     this.agents = loadAgents(this.extensionDir, mergedDefaults, this.config.delegationMode, local?.agents);
+
+    // Update active config with merged reflection for current project
+    this.config.reflection = mergedReflection;
 
     const overriddenAgents = Object.keys(local?.agents || {});
     if (local) {
@@ -347,6 +358,7 @@ export default class ConductorExtension implements Extension {
   }
 
   getAgents(context: ExtensionContext): AgentProfile[] {
+    if (!this.config) return this.agents;
     const projectDir = context.getProjectDir();
     if (projectDir && projectDir !== this.currentProjectDir) {
       // Project directory changed since last refresh — refresh agents
@@ -356,6 +368,7 @@ export default class ConductorExtension implements Extension {
   }
 
   async onProjectStarted(event: { readonly baseDir: string }, context: ExtensionContext): Promise<void> {
+    if (!this.config) return;
     const projectDir = event.baseDir;
     if (projectDir && projectDir !== this.currentProjectDir) {
       context.log(`[Conductor] project started: ${path.basename(projectDir)}`, 'info');
