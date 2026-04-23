@@ -279,6 +279,7 @@ export default class ConductorExtension implements Extension {
   } = {};
   private currentProjectDir: string = '';
   private stepCount: Map<string, number> = new Map();
+  private lastReflectionStep: Map<string, number> = new Map();
 
   async onLoad(context: ExtensionContext): Promise<void> {
     this.extensionDir = path.resolve(__dirname);
@@ -299,6 +300,7 @@ export default class ConductorExtension implements Extension {
   private refreshAgents(context: ExtensionContext, projectDir: string): void {
     if (!projectDir) return;
     this.stepCount.clear();
+    this.lastReflectionStep.clear();
     this.currentProjectDir = projectDir;
 
     // Load local config for this project
@@ -497,10 +499,10 @@ export default class ConductorExtension implements Extension {
     event: AgentStepFinishedEvent,
     _context: ExtensionContext
   ): Promise<void | Partial<AgentStepFinishedEvent>> {
-    if (!this.config.reflection?.enabled) return event;
+    if (!this.config.reflection?.enabled) return;
 
     const interval = this.config.reflection?.interval ?? 10;
-    if (interval < 2) return event;
+    if (interval < 2) return;
 
     const profileId = event.agentProfile.id;
     const currentCount = this.stepCount.get(profileId) ?? 0;
@@ -628,11 +630,12 @@ export default class ConductorExtension implements Extension {
         const interval = this.config.reflection?.interval ?? 10;
         const profileId = event.profile.id;
         const currentCount = this.stepCount.get(profileId) ?? 0;
+        const lastReflected = this.lastReflectionStep.get(profileId) ?? 0;
 
-        if (interval >= 2 && currentCount > 0 && currentCount % interval === 0) {
-          this.stepCount.set(profileId, 0); // Reset counter after reflection
+        if (interval >= 2 && currentCount > 0 && currentCount - lastReflected >= interval) {
+          this.lastReflectionStep.set(profileId, currentCount);
 
-          const reflectionPrompt = `\n<ThisIsImportant>\n<Reminder>\n⏸️ **REFLECTION CHECKPOINT** — You have completed ${interval} steps. Pause and reflect:
+          const reflectionPrompt = `\n<ThisIsImportant>\n<Reminder>\n⏸️ **REFLECTION CHECKPOINT** — You have completed ${interval} steps since the last checkpoint. Pause and reflect:
 
 1. **Progress**: What have you accomplished so far? Summarize key outcomes.
 2. **Alignment**: Are you still on track with the original brief/task? Has the scope drifted?
