@@ -1,5 +1,6 @@
 import type {
   AgentProfile,
+  AgentStartedEvent,
   Extension,
   ExtensionContext,
   ImportantRemindersEvent,
@@ -266,48 +267,76 @@ export default class ConductorExtension implements Extension {
   private config!: ConductorConfig;
   private extensionDir = '';
   private localConfig: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } = {};
+  private currentProjectDir: string = '';
 
   async onLoad(context: ExtensionContext): Promise<void> {
     this.extensionDir = path.resolve(__dirname);
     try {
       this.config = loadConfig(this.extensionDir);
 
-      // Apply local project-level overrides
-      try {
-        const local = loadLocalConfig(context.getProjectDir());
-        if (local) {
-          this.localConfig = local;
-          if (local.defaults) {
-            this.config.defaults = deepMerge(this.config.defaults, local.defaults);
-          }
-          
-          const overriddenAgents = Object.keys(local.agents || {});
-          context.log(
-            `[Conductor] loaded local config from .aider-desk/conductor.json (overrides: defaults${overriddenAgents.length > 0 ? `, agents: ${overriddenAgents.join(', ')}` : ''})`,
-            'info'
-          );
-        } else {
-          context.log(
-            `[Conductor] loaded (mode: ${this.config.delegationMode}, agents: ${loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode).length})`,
-            'info'
-          );
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        context.log(`[Conductor] failed to load local config: ${msg}`, 'warn');
-      }
-
       const agentsDir = path.join(this.extensionDir, 'agents');
       this.agentsConfig = JSON.parse(fs.readFileSync(path.join(agentsDir, 'index.json'), 'utf-8'));
-      this.agents = loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode, this.localConfig.agents);
+
+      // Refresh agents for the current project directory
+      this.refreshAgents(context, context.getProjectDir());
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       context.log(`[Conductor] extension failed to load: ${errorMessage}`, 'error');
     }
   }
 
-  getAgents(_context: ExtensionContext): AgentProfile[] {
+  private refreshAgents(context: ExtensionContext, projectDir: string): void {
+    this.currentProjectDir = projectDir;
+
+    // Load local config for this project
+    let local: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } | null = null;
+    try {
+      local = loadLocalConfig(projectDir);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      context.log(`[Conductor] failed to load local config: ${msg}`, 'warn');
+    }
+
+    // Merge defaults
+    const mergedDefaults = local?.defaults
+      ? deepMerge({ ...this.config.defaults }, local.defaults)
+      : { ...this.config.defaults };
+
+    // Store localConfig for persistence
+    this.localConfig = local || {};
+
+    // Rebuild agents with the correct local overrides
+    this.agents = loadAgents(this.extensionDir, mergedDefaults, this.config.delegationMode, local?.agents);
+
+    const overriddenAgents = Object.keys(local?.agents || {});
+    if (local) {
+      context.log(
+        `[Conductor] refreshed agents for project ${path.basename(projectDir)} (overrides: defaults${overriddenAgents.length > 0 ? `, agents: ${overriddenAgents.join(', ')}` : ''})`,
+        'info'
+      );
+    } else {
+      context.log(
+        `[Conductor] refreshed agents for project ${path.basename(projectDir)} (no local config)`,
+        'info'
+      );
+    }
+  }
+
+  getAgents(context: ExtensionContext): AgentProfile[] {
+    const projectDir = context.getProjectDir();
+    if (projectDir && projectDir !== this.currentProjectDir) {
+      // Project directory changed since last refresh — refresh agents
+      this.refreshAgents(context, projectDir);
+    }
     return this.agents;
+  }
+
+  async onProjectStarted(event: { readonly baseDir: string }, context: ExtensionContext): Promise<void> {
+    const projectDir = event.baseDir;
+    if (projectDir && projectDir !== this.currentProjectDir) {
+      context.log(`[Conductor] project started: ${path.basename(projectDir)}`, 'info');
+      this.refreshAgents(context, projectDir);
+    }
   }
 
   getUIComponents(_context: ExtensionContext): UIComponentDefinition[] {
@@ -415,6 +444,33 @@ export default class ConductorExtension implements Extension {
     }
   }
 
+  async onAgentStarted(event: AgentStartedEvent, context: ExtensionContext): Promise<Partial<AgentStartedEvent>> {
+    const agentId = event.agentProfile?.id;
+    if (!agentId) return {};
+
+    const conductorAgent = this.agents.find(a => a.id === agentId);
+    if (!conductorAgent) return {};
+
+    // Check if enabledServers needs to be corrected
+    const currentServers = event.agentProfile.enabledServers || [];
+    const expectedServers = conductorAgent.enabledServers || [];
+
+    if (JSON.stringify(currentServers) !== JSON.stringify(expectedServers)) {
+      context.log(
+        `[Conductor] onAgentStarted: correcting enabledServers for ${agentId} from [${currentServers}] to [${expectedServers}]`,
+        'info'
+      );
+      return {
+        agentProfile: {
+          ...event.agentProfile,
+          enabledServers: expectedServers,
+        },
+      };
+    }
+
+    return {};
+  }
+
   async onAgentProfileUpdated(
     context: ExtensionContext,
     agentId: string,
@@ -422,16 +478,32 @@ export default class ConductorExtension implements Extension {
   ): Promise<AgentProfile> {
     const idx = this.agents.findIndex(a => a.id === agentId);
     if (idx !== -1) {
+      const currentAgent = this.agents[idx];
+
+      // Preserve enabledServers if the incoming profile strips them
+      const currentServers = currentAgent.enabledServers || [];
+      const incomingServers = updatedProfile.enabledServers || [];
+      if (currentServers.length > 0 && incomingServers.length === 0) {
+        context.log(
+          `[Conductor] onAgentProfileUpdated: preserving enabledServers for ${agentId} (incoming was empty, had [${currentServers}])`,
+          'warn'
+        );
+        updatedProfile = {
+          ...updatedProfile,
+          enabledServers: currentServers,
+        };
+      }
+
       this.agents[idx] = updatedProfile;
-    }
 
-    try {
-      await this.persistAgentOverride(context, agentId, updatedProfile);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      context.log(`[Conductor] failed to persist agent override for ${agentId}: ${msg}`, 'error');
+      // Persist the override
+      try {
+        await this.persistAgentOverride(context, agentId, updatedProfile);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        context.log(`[Conductor] failed to persist agent override for ${agentId}: ${msg}`, 'error');
+      }
     }
-
     return updatedProfile;
   }
 
