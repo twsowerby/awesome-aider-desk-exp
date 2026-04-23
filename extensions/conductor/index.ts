@@ -297,6 +297,7 @@ export default class ConductorExtension implements Extension {
 
   private refreshAgents(context: ExtensionContext, projectDir: string): void {
     if (!projectDir) return;
+    this.needsReflection.clear();
     this.currentProjectDir = projectDir;
 
     // Load local config for this project
@@ -499,6 +500,7 @@ export default class ConductorExtension implements Extension {
     if (!reflection?.enabled) return event;
 
     const interval = reflection.interval ?? 10;
+    if (interval < 2) return event;
     const { iterationCount, agentProfile } = event;
 
     if (iterationCount > 0 && iterationCount % interval === 0) {
@@ -626,9 +628,7 @@ export default class ConductorExtension implements Extension {
       if (this.config.reflection?.enabled && this.needsReflection.get(event.profile.id)) {
         this.needsReflection.delete(event.profile.id);
 
-        const reflectionPrompt = `
-<Reminder>
-⏸️ **REFLECTION CHECKPOINT** — You have completed ${this.config.reflection?.interval ?? 10} iterations.
+        const reflectionPrompt = `\n<ThisIsImportant>\n<Reminder>\n⏸️ **REFLECTION CHECKPOINT** — You have completed ${this.config.reflection?.interval ?? 10} iterations.
 
 Pause and briefly reflect on:
 1. **Progress**: What has been accomplished so far?
@@ -636,7 +636,7 @@ Pause and briefly reflect on:
 3. **Plan**: Do you need to adjust your approach or continue as planned?
 
 Be concise. If you are off track, course-correct now.
-</Reminder>`;
+</Reminder>\n</ThisIsImportant>`;
 
         if (event.profile.id === 'conductor') {
           event.remindersContent = reflectionPrompt + (event.remindersContent || '');
