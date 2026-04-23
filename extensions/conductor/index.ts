@@ -227,6 +227,30 @@ const CONFIGURABLE_FIELDS = [
   'autoApprove'
 ] as const;
 
+/**
+ * Returns a profile with only default/base values, used for diffing.
+ */
+function getBaseProfile(agentId: string, config: ConductorConfig, agentsConfig: AgentsConfig): AgentProfile {
+  const entry = agentsConfig.agents.find(a => a.id === agentId);
+  if (!entry) {
+    throw new Error(`Agent config entry not found for ${agentId}`);
+  }
+
+  const mergedOverrides = {
+    ...entry.overrides,
+    ...(entry.overridesByMode?.[config.delegationMode] || {})
+  };
+
+  return {
+    ...config.defaults,
+    ...mergedOverrides,
+    id: entry.id,
+    name: entry.name,
+    customInstructions: '',
+    subagent: entry.subagent
+  } as AgentProfile;
+}
+
 export default class ConductorExtension implements Extension {
   static metadata = {
     name: 'Conductor',
@@ -410,29 +434,8 @@ export default class ConductorExtension implements Extension {
     return updatedProfile;
   }
 
-  private getBaseProfile(agentId: string): AgentProfile {
-    const entry = this.getAgentConfigEntry(agentId);
-    if (!entry) {
-      throw new Error(`Agent config entry not found for ${agentId}`);
-    }
-
-    const mergedOverrides = {
-      ...entry.overrides,
-      ...(entry.overridesByMode?.[this.config.delegationMode] || {})
-    };
-
-    return {
-      ...this.config.defaults,
-      ...mergedOverrides,
-      id: entry.id,
-      name: entry.name,
-      customInstructions: '',
-      subagent: entry.subagent
-    } as AgentProfile;
-  }
-
   private async persistAgentOverride(context: ExtensionContext, agentId: string, updatedProfile: AgentProfile): Promise<void> {
-    const baseProfile = this.getBaseProfile(agentId);
+    const baseProfile = getBaseProfile(agentId, this.config, this.agentsConfig);
     const diff: Record<string, any> = {};
 
     for (const field of CONFIGURABLE_FIELDS) {
@@ -461,14 +464,11 @@ export default class ConductorExtension implements Extension {
     }
 
     if (Object.keys(diff).length === 0) {
-      if (local.agents[agentId]) {
-        delete local.agents[agentId];
-      }
+      delete local.agents[agentId];
     } else {
       local.agents[agentId] = diff;
     }
 
-    // Clean up empty agents object if no overrides left
     if (Object.keys(local.agents).length === 0) {
       delete local.agents;
     }
@@ -480,8 +480,9 @@ export default class ConductorExtension implements Extension {
 
     fs.writeFileSync(localConfigPath, JSON.stringify(local, null, 2), 'utf-8');
     
-    if (Object.keys(diff).length > 0) {
-      context.log(`[Conductor] persisted agent override for ${agentId}: ${Object.keys(diff).join(', ')}`, 'info');
+    const fields = Object.keys(diff);
+    if (fields.length > 0) {
+      context.log(`[Conductor] persisted agent override for ${agentId}: ${fields.join(', ')}`, 'info');
     } else {
       context.log(`[Conductor] removed agent override for ${agentId} (matches base profile)`, 'info');
     }
