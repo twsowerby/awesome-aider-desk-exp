@@ -331,8 +331,8 @@ export default class ConductorExtension implements Extension {
 
     // Merge defaults
     const mergedDefaults = local?.defaults
-      ? deepMerge({ ...this.config.defaults }, local.defaults)
-      : { ...this.config.defaults };
+      ? deepMerge({ ...this.baseConfig.defaults }, local.defaults)
+      : { ...this.baseConfig.defaults };
 
     // Store localConfig for persistence
     this.localConfig = local || {};
