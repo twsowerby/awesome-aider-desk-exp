@@ -286,6 +286,7 @@ export default class ConductorExtension implements Extension {
   }
 
   private refreshAgents(context: ExtensionContext, projectDir: string): void {
+    if (!projectDir) return;
     this.currentProjectDir = projectDir;
 
     // Load local config for this project
@@ -480,12 +481,12 @@ export default class ConductorExtension implements Extension {
     if (idx !== -1) {
       const currentAgent = this.agents[idx];
 
-      // Preserve enabledServers if the incoming profile strips them
+      // Preserve conductor-managed enabledServers if they differ from incoming
       const currentServers = currentAgent.enabledServers || [];
       const incomingServers = updatedProfile.enabledServers || [];
-      if (currentServers.length > 0 && incomingServers.length === 0) {
+      if (JSON.stringify(incomingServers) !== JSON.stringify(currentServers) && currentServers.length > 0) {
         context.log(
-          `[Conductor] onAgentProfileUpdated: preserving enabledServers for ${agentId} (incoming was empty, had [${currentServers}])`,
+          `[Conductor] onAgentProfileUpdated: preserving enabledServers for ${agentId} (incoming: [${incomingServers}], expected: [${currentServers}])`,
           'warn'
         );
         updatedProfile = {
