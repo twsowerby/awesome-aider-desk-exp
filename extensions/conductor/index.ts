@@ -204,6 +204,29 @@ function sanitizeTaskDescription(text: string): string {
   );
 }
 
+const CONFIGURABLE_FIELDS = [
+  'provider',
+  'model',
+  'commitProvider',
+  'commitModel',
+  'maxIterations',
+  'minTimeBetweenToolCalls',
+  'enabledServers',
+  'toolApprovals',
+  'toolSettings',
+  'includeContextFiles',
+  'includeRepoMap',
+  'usePowerTools',
+  'useAiderTools',
+  'useTodoTools',
+  'useSubagents',
+  'useTaskTools',
+  'useMemoryTools',
+  'useSkillsTools',
+  'useExtensionTools',
+  'autoApprove'
+] as const;
+
 export default class ConductorExtension implements Extension {
   static metadata = {
     name: 'Conductor',
@@ -368,7 +391,7 @@ export default class ConductorExtension implements Extension {
   }
 
   async onAgentProfileUpdated(
-    _context: ExtensionContext,
+    context: ExtensionContext,
     agentId: string,
     updatedProfile: AgentProfile
   ): Promise<AgentProfile> {
@@ -376,7 +399,92 @@ export default class ConductorExtension implements Extension {
     if (idx !== -1) {
       this.agents[idx] = updatedProfile;
     }
+
+    try {
+      await this.persistAgentOverride(context, agentId, updatedProfile);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      context.log(`[Conductor] failed to persist agent override for ${agentId}: ${msg}`, 'error');
+    }
+
     return updatedProfile;
+  }
+
+  private getBaseProfile(agentId: string): AgentProfile {
+    const entry = this.getAgentConfigEntry(agentId);
+    if (!entry) {
+      throw new Error(`Agent config entry not found for ${agentId}`);
+    }
+
+    const mergedOverrides = {
+      ...entry.overrides,
+      ...(entry.overridesByMode?.[this.config.delegationMode] || {})
+    };
+
+    return {
+      ...this.config.defaults,
+      ...mergedOverrides,
+      id: entry.id,
+      name: entry.name,
+      customInstructions: '',
+      subagent: entry.subagent
+    } as AgentProfile;
+  }
+
+  private async persistAgentOverride(context: ExtensionContext, agentId: string, updatedProfile: AgentProfile): Promise<void> {
+    const baseProfile = this.getBaseProfile(agentId);
+    const diff: Record<string, any> = {};
+
+    for (const field of CONFIGURABLE_FIELDS) {
+      const updatedVal = (updatedProfile as any)[field];
+      const baseVal = (baseProfile as any)[field];
+
+      if (JSON.stringify(updatedVal) !== JSON.stringify(baseVal)) {
+        diff[field] = updatedVal;
+      }
+    }
+
+    const projectDir = context.getProjectDir();
+    const localConfigPath = path.join(projectDir, '.aider-desk', 'conductor.json');
+    
+    let local: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } = {};
+    if (fs.existsSync(localConfigPath)) {
+      try {
+        local = JSON.parse(fs.readFileSync(localConfigPath, 'utf-8'));
+      } catch (e) {
+        context.log(`[Conductor] error reading existing local config: ${e}`, 'warn');
+      }
+    }
+
+    if (!local.agents) {
+      local.agents = {};
+    }
+
+    if (Object.keys(diff).length === 0) {
+      if (local.agents[agentId]) {
+        delete local.agents[agentId];
+      }
+    } else {
+      local.agents[agentId] = diff;
+    }
+
+    // Clean up empty agents object if no overrides left
+    if (Object.keys(local.agents).length === 0) {
+      delete local.agents;
+    }
+
+    const aiderDeskDir = path.join(projectDir, '.aider-desk');
+    if (!fs.existsSync(aiderDeskDir)) {
+      fs.mkdirSync(aiderDeskDir, { recursive: true });
+    }
+
+    fs.writeFileSync(localConfigPath, JSON.stringify(local, null, 2), 'utf-8');
+    
+    if (Object.keys(diff).length > 0) {
+      context.log(`[Conductor] persisted agent override for ${agentId}: ${Object.keys(diff).join(', ')}`, 'info');
+    } else {
+      context.log(`[Conductor] removed agent override for ${agentId} (matches base profile)`, 'info');
+    }
   }
 
   async onImportantReminders(
