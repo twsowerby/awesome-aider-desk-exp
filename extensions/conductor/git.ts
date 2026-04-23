@@ -103,5 +103,5 @@ export function getDiff(projectDir: string): string | null {
 
 // Generate a fallback commit message when LLM generation fails
 export function generateFallbackMessage(agentRole: string, taskDescription: string): string {
-  return `${agentRole}: ${taskDescription}`;
+  return `chore(${agentRole}): ${taskDescription}`;
 }

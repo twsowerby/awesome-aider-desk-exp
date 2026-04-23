@@ -204,6 +204,54 @@ function sanitizeTaskDescription(text: string): string {
   );
 }
 
+const CONFIGURABLE_FIELDS = [
+  'provider',
+  'model',
+  'commitProvider',
+  'commitModel',
+  'maxIterations',
+  'minTimeBetweenToolCalls',
+  'enabledServers',
+  'toolApprovals',
+  'toolSettings',
+  'includeContextFiles',
+  'includeRepoMap',
+  'usePowerTools',
+  'useAiderTools',
+  'useTodoTools',
+  'useSubagents',
+  'useTaskTools',
+  'useMemoryTools',
+  'useSkillsTools',
+  'useExtensionTools',
+  'autoApprove'
+] as const;
+// customInstructions and subagent are intentionally excluded because they're managed through the agents config, not user overrides.
+
+/**
+ * Returns a profile with only default/base values, used for diffing.
+ */
+function getBaseProfile(agentId: string, config: ConductorConfig, agentsConfig: AgentsConfig): AgentProfile {
+  const entry = agentsConfig.agents.find(a => a.id === agentId);
+  if (!entry) {
+    throw new Error(`Agent config entry not found for ${agentId}`);
+  }
+
+  const mergedOverrides = {
+    ...entry.overrides,
+    ...(entry.overridesByMode?.[config.delegationMode] || {})
+  };
+
+  return {
+    ...config.defaults,
+    ...mergedOverrides,
+    id: entry.id,
+    name: entry.name,
+    customInstructions: '',
+    subagent: entry.subagent
+  } as AgentProfile;
+}
+
 export default class ConductorExtension implements Extension {
   static metadata = {
     name: 'Conductor',
@@ -217,6 +265,7 @@ export default class ConductorExtension implements Extension {
   private agentsConfig!: AgentsConfig;
   private config!: ConductorConfig;
   private extensionDir = '';
+  private localConfig: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } = {};
 
   async onLoad(context: ExtensionContext): Promise<void> {
     this.extensionDir = path.resolve(__dirname);
@@ -224,34 +273,33 @@ export default class ConductorExtension implements Extension {
       this.config = loadConfig(this.extensionDir);
 
       // Apply local project-level overrides
-      let local: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } | null = null;
       try {
-        local = loadLocalConfig(context.getProjectDir());
+        const local = loadLocalConfig(context.getProjectDir());
+        if (local) {
+          this.localConfig = local;
+          if (local.defaults) {
+            this.config.defaults = deepMerge(this.config.defaults, local.defaults);
+          }
+          
+          const overriddenAgents = Object.keys(local.agents || {});
+          context.log(
+            `[Conductor] loaded local config from .aider-desk/conductor.json (overrides: defaults${overriddenAgents.length > 0 ? `, agents: ${overriddenAgents.join(', ')}` : ''})`,
+            'info'
+          );
+        } else {
+          context.log(
+            `[Conductor] loaded (mode: ${this.config.delegationMode}, agents: ${loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode).length})`,
+            'info'
+          );
+        }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         context.log(`[Conductor] failed to load local config: ${msg}`, 'warn');
       }
 
-      if (local) {
-        if (local.defaults) {
-          this.config.defaults = deepMerge(this.config.defaults, local.defaults);
-        }
-        
-        const overriddenAgents = Object.keys(local.agents || {});
-        context.log(
-          `[Conductor] loaded local config from .aider-desk/conductor.json (overrides: defaults${overriddenAgents.length > 0 ? `, agents: ${overriddenAgents.join(', ')}` : ''})`,
-          'info'
-        );
-      } else {
-        context.log(
-          `[Conductor] loaded (mode: ${this.config.delegationMode}, agents: ${loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode).length})`,
-          'info'
-        );
-      }
-
       const agentsDir = path.join(this.extensionDir, 'agents');
       this.agentsConfig = JSON.parse(fs.readFileSync(path.join(agentsDir, 'index.json'), 'utf-8'));
-      this.agents = loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode, local?.agents);
+      this.agents = loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode, this.localConfig.agents);
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       context.log(`[Conductor] extension failed to load: ${errorMessage}`, 'error');
@@ -368,7 +416,7 @@ export default class ConductorExtension implements Extension {
   }
 
   async onAgentProfileUpdated(
-    _context: ExtensionContext,
+    context: ExtensionContext,
     agentId: string,
     updatedProfile: AgentProfile
   ): Promise<AgentProfile> {
@@ -376,7 +424,70 @@ export default class ConductorExtension implements Extension {
     if (idx !== -1) {
       this.agents[idx] = updatedProfile;
     }
+
+    try {
+      await this.persistAgentOverride(context, agentId, updatedProfile);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      context.log(`[Conductor] failed to persist agent override for ${agentId}: ${msg}`, 'error');
+    }
+
     return updatedProfile;
+  }
+
+  private async persistAgentOverride(context: ExtensionContext, agentId: string, updatedProfile: AgentProfile): Promise<void> {
+    const baseProfile = getBaseProfile(agentId, this.config, this.agentsConfig);
+    const diff: Record<string, any> = {};
+
+    for (const field of CONFIGURABLE_FIELDS) {
+      const updatedVal = (updatedProfile as any)[field];
+      const baseVal = (baseProfile as any)[field];
+
+      if (JSON.stringify(updatedVal) !== JSON.stringify(baseVal)) {
+        diff[field] = updatedVal;
+      }
+    }
+
+    const projectDir = context.getProjectDir();
+    const localConfigPath = path.join(projectDir, '.aider-desk', 'conductor.json');
+    
+    // Check for malformed JSON before proceeding
+    if (fs.existsSync(localConfigPath)) {
+      try {
+        JSON.parse(fs.readFileSync(localConfigPath, 'utf-8'));
+      } catch (e) {
+        context.log(`[Conductor] existing local config is malformed, aborting override to prevent data loss: ${e}`, 'error');
+        return;
+      }
+    }
+
+    if (!this.localConfig.agents) {
+      this.localConfig.agents = {};
+    }
+
+    if (Object.keys(diff).length === 0) {
+      delete this.localConfig.agents[agentId];
+    } else {
+      this.localConfig.agents[agentId] = diff;
+    }
+
+    if (Object.keys(this.localConfig.agents).length === 0) {
+      delete this.localConfig.agents;
+    }
+
+    const aiderDeskDir = path.join(projectDir, '.aider-desk');
+    if (!fs.existsSync(aiderDeskDir)) {
+      fs.mkdirSync(aiderDeskDir, { recursive: true });
+    }
+
+    fs.writeFileSync(localConfigPath, JSON.stringify(this.localConfig, null, 2), 'utf-8');
+    
+    const fields = Object.keys(diff);
+    if (fields.length > 0) {
+      context.log(`[Conductor] persisted agent override for ${agentId}: ${fields.join(', ')}`, 'info');
+    } else {
+      context.log(`[Conductor] removed agent override for ${agentId} (matches base profile)`, 'info');
+    }
   }
 
   async onImportantReminders(
@@ -590,20 +701,22 @@ export default class ConductorExtension implements Extension {
     commitProvider: string | undefined,
     commitModel: string | undefined
   ): Promise<string> {
+    const sanitizedAgentName = agentName.replace(/^[\u2500-\u257F ]+/, '').trim().toLowerCase() || agentId;
+
     if (!commitProvider || !commitModel) {
-      return this.fallbackCommitMessage(agentId, taskDescription);
+      return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
     }
 
     try {
       const taskContext = ctx.getTaskContext();
       if (!taskContext) {
         ctx.log('[Conductor] No task context for commit message generation, using fallback', 'warn');
-        return this.fallbackCommitMessage(agentId, taskDescription);
+        return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
       }
 
       const diffContent = git.getDiff(ctx.getProjectDir()) || '(no diff available)';
-      const systemPrompt = `You are a commit message generator. Write a concise, conventional-commits-style commit message based on the git diff. Use the format: "type: description". Types: feat, fix, refactor, style, docs, test, chore. Keep the message under 72 characters. Output ONLY the commit message, nothing else.`;
-      const userPrompt = `Agent: ${agentName} (${agentId})\nTask: ${taskDescription.slice(0, 200)}\n\nDiff:\n${diffContent.slice(0, 4000)}`;
+      const systemPrompt = `You are a commit message generator. Write a concise, conventional-commits-style commit message based on the git diff. Use the format: "type(agent): description" where agent is the lowercase agent name. Types: feat, fix, refactor, style, docs, test, chore. Examples: "feat(implementor): add user authentication", "fix(debugger): resolve null pointer in parser", "refactor(simplifier): extract validation into shared module". Keep the message under 72 characters. Output ONLY the commit message, nothing else.`;
+      const userPrompt = `Agent: ${sanitizedAgentName}\nTask: ${taskDescription.slice(0, 200)}\n\nDiff:\n${diffContent.slice(0, 4000)}`;
 
       // Find a profile whose provider and model match the commit fields.
       const profiles = ctx.getProjectContext().getAgentProfiles();
@@ -615,7 +728,7 @@ export default class ConductorExtension implements Extension {
           `[Conductor] No agent profile found matching commitProvider "${commitProvider}" and commitModel "${commitModel}", using fallback`,
           'warn'
         );
-        return this.fallbackCommitMessage(agentId, taskDescription);
+        return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
       }
 
       const generated = await taskContext.generateText(commitProfile, systemPrompt, userPrompt);
@@ -627,12 +740,12 @@ export default class ConductorExtension implements Extension {
       ctx.log(`[Conductor] LLM commit message generation failed: ${errorMessage}`, 'warn');
     }
 
-    return this.fallbackCommitMessage(agentId, taskDescription);
+    return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
   }
 
-  private fallbackCommitMessage(agentId: string, taskDescription: string): string {
+  private fallbackCommitMessage(sanitizedAgentName: string, taskDescription: string): string {
     const shortDesc = taskDescription.slice(0, 80).split('\n')[0].trim() || 'code changes';
-    return git.generateFallbackMessage(agentId, shortDesc);
+    return git.generateFallbackMessage(sanitizedAgentName, shortDesc);
   }
 
   /**
