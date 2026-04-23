@@ -226,6 +226,7 @@ const CONFIGURABLE_FIELDS = [
   'useExtensionTools',
   'autoApprove'
 ] as const;
+// customInstructions and subagent are intentionally excluded because they're managed through the agents config, not user overrides.
 
 /**
  * Returns a profile with only default/base values, used for diffing.
@@ -264,6 +265,7 @@ export default class ConductorExtension implements Extension {
   private agentsConfig!: AgentsConfig;
   private config!: ConductorConfig;
   private extensionDir = '';
+  private localConfig: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } = {};
 
   async onLoad(context: ExtensionContext): Promise<void> {
     this.extensionDir = path.resolve(__dirname);
@@ -271,34 +273,33 @@ export default class ConductorExtension implements Extension {
       this.config = loadConfig(this.extensionDir);
 
       // Apply local project-level overrides
-      let local: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } | null = null;
       try {
-        local = loadLocalConfig(context.getProjectDir());
+        const local = loadLocalConfig(context.getProjectDir());
+        if (local) {
+          this.localConfig = local;
+          if (local.defaults) {
+            this.config.defaults = deepMerge(this.config.defaults, local.defaults);
+          }
+          
+          const overriddenAgents = Object.keys(local.agents || {});
+          context.log(
+            `[Conductor] loaded local config from .aider-desk/conductor.json (overrides: defaults${overriddenAgents.length > 0 ? `, agents: ${overriddenAgents.join(', ')}` : ''})`,
+            'info'
+          );
+        } else {
+          context.log(
+            `[Conductor] loaded (mode: ${this.config.delegationMode}, agents: ${loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode).length})`,
+            'info'
+          );
+        }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         context.log(`[Conductor] failed to load local config: ${msg}`, 'warn');
       }
 
-      if (local) {
-        if (local.defaults) {
-          this.config.defaults = deepMerge(this.config.defaults, local.defaults);
-        }
-        
-        const overriddenAgents = Object.keys(local.agents || {});
-        context.log(
-          `[Conductor] loaded local config from .aider-desk/conductor.json (overrides: defaults${overriddenAgents.length > 0 ? `, agents: ${overriddenAgents.join(', ')}` : ''})`,
-          'info'
-        );
-      } else {
-        context.log(
-          `[Conductor] loaded (mode: ${this.config.delegationMode}, agents: ${loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode).length})`,
-          'info'
-        );
-      }
-
       const agentsDir = path.join(this.extensionDir, 'agents');
       this.agentsConfig = JSON.parse(fs.readFileSync(path.join(agentsDir, 'index.json'), 'utf-8'));
-      this.agents = loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode, local?.agents);
+      this.agents = loadAgents(this.extensionDir, this.config.defaults, this.config.delegationMode, this.localConfig.agents);
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       context.log(`[Conductor] extension failed to load: ${errorMessage}`, 'error');
@@ -450,27 +451,28 @@ export default class ConductorExtension implements Extension {
     const projectDir = context.getProjectDir();
     const localConfigPath = path.join(projectDir, '.aider-desk', 'conductor.json');
     
-    let local: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } = {};
+    // Check for malformed JSON before proceeding
     if (fs.existsSync(localConfigPath)) {
       try {
-        local = JSON.parse(fs.readFileSync(localConfigPath, 'utf-8'));
+        JSON.parse(fs.readFileSync(localConfigPath, 'utf-8'));
       } catch (e) {
-        context.log(`[Conductor] error reading existing local config: ${e}`, 'warn');
+        context.log(`[Conductor] existing local config is malformed, aborting override to prevent data loss: ${e}`, 'error');
+        return;
       }
     }
 
-    if (!local.agents) {
-      local.agents = {};
+    if (!this.localConfig.agents) {
+      this.localConfig.agents = {};
     }
 
     if (Object.keys(diff).length === 0) {
-      delete local.agents[agentId];
+      delete this.localConfig.agents[agentId];
     } else {
-      local.agents[agentId] = diff;
+      this.localConfig.agents[agentId] = diff;
     }
 
-    if (Object.keys(local.agents).length === 0) {
-      delete local.agents;
+    if (Object.keys(this.localConfig.agents).length === 0) {
+      delete this.localConfig.agents;
     }
 
     const aiderDeskDir = path.join(projectDir, '.aider-desk');
@@ -478,7 +480,7 @@ export default class ConductorExtension implements Extension {
       fs.mkdirSync(aiderDeskDir, { recursive: true });
     }
 
-    fs.writeFileSync(localConfigPath, JSON.stringify(local, null, 2), 'utf-8');
+    fs.writeFileSync(localConfigPath, JSON.stringify(this.localConfig, null, 2), 'utf-8');
     
     const fields = Object.keys(diff);
     if (fields.length > 0) {
