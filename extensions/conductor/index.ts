@@ -1,6 +1,7 @@
 import type {
   AgentProfile,
   AgentStartedEvent,
+  AgentStepStartedEvent,
   Extension,
   ExtensionContext,
   ImportantRemindersEvent,
@@ -70,6 +71,10 @@ interface AgentDefaults {
 
 interface ConductorConfig {
   delegationMode: DelegationMode;
+  reflection?: {
+    enabled: boolean;
+    interval: number;
+  };
   reminders?: {
     conductor?: string[];
     subagent?: string[];
@@ -266,8 +271,13 @@ export default class ConductorExtension implements Extension {
   private agentsConfig!: AgentsConfig;
   private config!: ConductorConfig;
   private extensionDir = '';
-  private localConfig: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } = {};
+  private localConfig: {
+    reflection?: { enabled?: boolean; interval?: number };
+    defaults?: Record<string, unknown>;
+    agents?: Record<string, Record<string, unknown>>;
+  } = {};
   private currentProjectDir: string = '';
+  private needsReflection: Map<string, boolean> = new Map();
 
   async onLoad(context: ExtensionContext): Promise<void> {
     this.extensionDir = path.resolve(__dirname);
@@ -290,12 +300,21 @@ export default class ConductorExtension implements Extension {
     this.currentProjectDir = projectDir;
 
     // Load local config for this project
-    let local: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } | null = null;
+    let local: {
+      reflection?: { enabled?: boolean; interval?: number };
+      defaults?: Record<string, unknown>;
+      agents?: Record<string, Record<string, unknown>>;
+    } | null = null;
     try {
       local = loadLocalConfig(projectDir);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       context.log(`[Conductor] failed to load local config: ${msg}`, 'warn');
+    }
+
+    // Merge reflection config
+    if (local?.reflection) {
+      this.config.reflection = deepMerge({ ...this.config.reflection }, local.reflection) as any;
     }
 
     // Merge defaults
@@ -472,6 +491,22 @@ export default class ConductorExtension implements Extension {
     return {};
   }
 
+  async onAgentStepStarted(
+    event: AgentStepStartedEvent,
+    _context: ExtensionContext
+  ): Promise<void | Partial<AgentStepStartedEvent>> {
+    if (!this.config.reflection?.enabled) return event;
+
+    const interval = this.config.reflection?.interval ?? 10;
+    const profileId = event.agentProfile.id;
+
+    if (event.iterationCount > 0 && event.iterationCount % interval === 0) {
+      this.needsReflection.set(profileId, true);
+    }
+
+    return event;
+  }
+
   async onAgentProfileUpdated(
     context: ExtensionContext,
     agentId: string,
@@ -584,6 +619,29 @@ export default class ConductorExtension implements Extension {
           } else {
             event.remindersContent += customReminders;
           }
+        }
+      }
+
+      if (this.config.reflection?.enabled && this.needsReflection.get(event.profile.id)) {
+        this.needsReflection.delete(event.profile.id);
+
+        const reflectionPrompt = `
+<Reminder>
+⏸️ REFLECTION CHECKPOINT — You have completed ${this.config.reflection?.interval ?? 10} iterations. Pause and reflect:
+
+1. **Progress**: What have you accomplished so far? Summarize key outcomes.
+2. **Alignment**: Are you still on track with the original brief/task? Has the scope drifted?
+3. **Issues**: Are there any blockers, unexpected complications, or diminishing returns?
+4. **Next Steps**: Should you continue as planned, adjust your approach, or conclude?
+
+Be honest and concise. If you're off track, course-correct now.
+</Reminder>`;
+
+        if (event.profile.id === 'conductor') {
+          // For conductor, prepend reflection before other reminders
+          event.remindersContent = reflectionPrompt + (event.remindersContent || '');
+        } else {
+          event.remindersContent += reflectionPrompt;
         }
       }
     } catch (e: unknown) {
