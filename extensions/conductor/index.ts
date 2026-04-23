@@ -495,13 +495,14 @@ export default class ConductorExtension implements Extension {
     event: AgentStepStartedEvent,
     _context: ExtensionContext
   ): Promise<void | Partial<AgentStepStartedEvent>> {
-    if (!this.config.reflection?.enabled) return event;
+    const { reflection } = this.config;
+    if (!reflection?.enabled) return event;
 
-    const interval = this.config.reflection?.interval ?? 10;
-    const profileId = event.agentProfile.id;
+    const interval = reflection.interval ?? 10;
+    const { iterationCount, agentProfile } = event;
 
-    if (event.iterationCount > 0 && event.iterationCount % interval === 0) {
-      this.needsReflection.set(profileId, true);
+    if (iterationCount > 0 && iterationCount % interval === 0) {
+      this.needsReflection.set(agentProfile.id, true);
     }
 
     return event;
@@ -627,18 +628,17 @@ export default class ConductorExtension implements Extension {
 
         const reflectionPrompt = `
 <Reminder>
-⏸️ REFLECTION CHECKPOINT — You have completed ${this.config.reflection?.interval ?? 10} iterations. Pause and reflect:
+⏸️ **REFLECTION CHECKPOINT** — You have completed ${this.config.reflection?.interval ?? 10} iterations.
 
-1. **Progress**: What have you accomplished so far? Summarize key outcomes.
-2. **Alignment**: Are you still on track with the original brief/task? Has the scope drifted?
-3. **Issues**: Are there any blockers, unexpected complications, or diminishing returns?
-4. **Next Steps**: Should you continue as planned, adjust your approach, or conclude?
+Pause and briefly reflect on:
+1. **Progress**: What has been accomplished so far?
+2. **Alignment**: Are you still on track with the original goal?
+3. **Plan**: Do you need to adjust your approach or continue as planned?
 
-Be honest and concise. If you're off track, course-correct now.
+Be concise. If you are off track, course-correct now.
 </Reminder>`;
 
         if (event.profile.id === 'conductor') {
-          // For conductor, prepend reflection before other reminders
           event.remindersContent = reflectionPrompt + (event.remindersContent || '');
         } else {
           event.remindersContent += reflectionPrompt;
