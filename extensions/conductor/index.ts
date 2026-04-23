@@ -1,7 +1,8 @@
 import type {
+  AgentFinishedEvent,
   AgentProfile,
   AgentStartedEvent,
-  AgentStepStartedEvent,
+  AgentStepFinishedEvent,
   Extension,
   ExtensionContext,
   ImportantRemindersEvent,
@@ -277,7 +278,7 @@ export default class ConductorExtension implements Extension {
     agents?: Record<string, Record<string, unknown>>;
   } = {};
   private currentProjectDir: string = '';
-  private needsReflection: Map<string, boolean> = new Map();
+  private stepCount: Map<string, number> = new Map();
 
   async onLoad(context: ExtensionContext): Promise<void> {
     this.extensionDir = path.resolve(__dirname);
@@ -297,7 +298,7 @@ export default class ConductorExtension implements Extension {
 
   private refreshAgents(context: ExtensionContext, projectDir: string): void {
     if (!projectDir) return;
-    this.needsReflection.clear();
+    this.stepCount.clear();
     this.currentProjectDir = projectDir;
 
     // Load local config for this project
@@ -492,20 +493,18 @@ export default class ConductorExtension implements Extension {
     return {};
   }
 
-  async onAgentStepStarted(
-    event: AgentStepStartedEvent,
+  async onAgentStepFinished(
+    event: AgentStepFinishedEvent,
     _context: ExtensionContext
-  ): Promise<void | Partial<AgentStepStartedEvent>> {
-    const { reflection } = this.config;
-    if (!reflection?.enabled) return event;
+  ): Promise<void | Partial<AgentStepFinishedEvent>> {
+    if (!this.config.reflection?.enabled) return event;
 
-    const interval = reflection.interval ?? 10;
+    const interval = this.config.reflection?.interval ?? 10;
     if (interval < 2) return event;
-    const { iterationCount, agentProfile } = event;
 
-    if (iterationCount > 0 && iterationCount % interval === 0) {
-      this.needsReflection.set(agentProfile.id, true);
-    }
+    const profileId = event.agentProfile.id;
+    const currentCount = this.stepCount.get(profileId) ?? 0;
+    this.stepCount.set(profileId, currentCount + 1);
 
     return event;
   }
@@ -625,23 +624,29 @@ export default class ConductorExtension implements Extension {
         }
       }
 
-      if (this.config.reflection?.enabled && this.needsReflection.get(event.profile.id)) {
-        this.needsReflection.delete(event.profile.id);
+      if (this.config.reflection?.enabled) {
+        const interval = this.config.reflection?.interval ?? 10;
+        const profileId = event.profile.id;
+        const currentCount = this.stepCount.get(profileId) ?? 0;
 
-        const reflectionPrompt = `\n<ThisIsImportant>\n<Reminder>\n⏸️ **REFLECTION CHECKPOINT** — You have completed ${this.config.reflection?.interval ?? 10} iterations.
+        if (interval >= 2 && currentCount > 0 && currentCount % interval === 0) {
+          this.stepCount.set(profileId, 0); // Reset counter after reflection
 
-Pause and briefly reflect on:
-1. **Progress**: What has been accomplished so far?
-2. **Alignment**: Are you still on track with the original goal?
-3. **Plan**: Do you need to adjust your approach or continue as planned?
+          const reflectionPrompt = `\n<ThisIsImportant>\n<Reminder>\n⏸️ **REFLECTION CHECKPOINT** — You have completed ${interval} steps. Pause and reflect:
 
-Be concise. If you are off track, course-correct now.
+1. **Progress**: What have you accomplished so far? Summarize key outcomes.
+2. **Alignment**: Are you still on track with the original brief/task? Has the scope drifted?
+3. **Issues**: Are there any blockers, unexpected complications, or diminishing returns?
+4. **Next Steps**: Should you continue as planned, adjust your approach, or conclude?
+
+Be honest and concise. If you're off track, course-correct now.
 </Reminder>\n</ThisIsImportant>`;
 
-        if (event.profile.id === 'conductor') {
-          event.remindersContent = reflectionPrompt + (event.remindersContent || '');
-        } else {
-          event.remindersContent += reflectionPrompt;
+          if (event.profile.id === 'conductor') {
+            event.remindersContent = reflectionPrompt + (event.remindersContent || '');
+          } else {
+            event.remindersContent += reflectionPrompt;
+          }
         }
       }
     } catch (e: unknown) {
