@@ -1,6 +1,8 @@
 import type {
+  AgentFinishedEvent,
   AgentProfile,
   AgentStartedEvent,
+  AgentStepFinishedEvent,
   Extension,
   ExtensionContext,
   ImportantRemindersEvent,
@@ -70,6 +72,10 @@ interface AgentDefaults {
 
 interface ConductorConfig {
   delegationMode: DelegationMode;
+  reflection?: {
+    enabled: boolean;
+    interval: number;
+  };
   reminders?: {
     conductor?: string[];
     subagent?: string[];
@@ -265,20 +271,33 @@ export default class ConductorExtension implements Extension {
   private agents: AgentProfile[] = [];
   private agentsConfig!: AgentsConfig;
   private config!: ConductorConfig;
+  private baseConfig!: ConductorConfig;
   private extensionDir = '';
-  private localConfig: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } = {};
+  private localConfig: {
+    reflection?: { enabled?: boolean; interval?: number };
+    defaults?: Record<string, unknown>;
+    agents?: Record<string, Record<string, unknown>>;
+  } = {};
   private currentProjectDir: string = '';
+  private stepCount: Map<string, number> = new Map();
+  private lastReflectionStep: Map<string, number> = new Map();
 
   async onLoad(context: ExtensionContext): Promise<void> {
     this.extensionDir = path.resolve(__dirname);
     try {
       this.config = loadConfig(this.extensionDir);
+      this.baseConfig = JSON.parse(JSON.stringify(this.config));
 
       const agentsDir = path.join(this.extensionDir, 'agents');
       this.agentsConfig = JSON.parse(fs.readFileSync(path.join(agentsDir, 'index.json'), 'utf-8'));
 
       // Refresh agents for the current project directory
       this.refreshAgents(context, context.getProjectDir());
+
+      // Ensure agents are loaded even if refreshAgents returned early (no project dir)
+      if (this.agents.length === 0 && this.config) {
+        this.agents = loadAgents(this.extensionDir, { ...this.config.defaults }, this.config.delegationMode);
+      }
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       context.log(`[Conductor] extension failed to load: ${errorMessage}`, 'error');
@@ -286,11 +305,18 @@ export default class ConductorExtension implements Extension {
   }
 
   private refreshAgents(context: ExtensionContext, projectDir: string): void {
+    if (!this.config) return;
     if (!projectDir) return;
+    this.stepCount.clear();
+    this.lastReflectionStep.clear();
     this.currentProjectDir = projectDir;
 
     // Load local config for this project
-    let local: { defaults?: Record<string, unknown>; agents?: Record<string, Record<string, unknown>> } | null = null;
+    let local: {
+      reflection?: { enabled?: boolean; interval?: number };
+      defaults?: Record<string, unknown>;
+      agents?: Record<string, Record<string, unknown>>;
+    } | null = null;
     try {
       local = loadLocalConfig(projectDir);
     } catch (e: unknown) {
@@ -298,16 +324,24 @@ export default class ConductorExtension implements Extension {
       context.log(`[Conductor] failed to load local config: ${msg}`, 'warn');
     }
 
+    // Merge reflection config
+    const mergedReflection = local?.reflection
+      ? (deepMerge({ ...this.baseConfig.reflection }, local.reflection) as any)
+      : { ...this.baseConfig.reflection };
+
     // Merge defaults
     const mergedDefaults = local?.defaults
-      ? deepMerge({ ...this.config.defaults }, local.defaults)
-      : { ...this.config.defaults };
+      ? deepMerge({ ...this.baseConfig.defaults }, local.defaults)
+      : { ...this.baseConfig.defaults };
 
     // Store localConfig for persistence
     this.localConfig = local || {};
 
     // Rebuild agents with the correct local overrides
     this.agents = loadAgents(this.extensionDir, mergedDefaults, this.config.delegationMode, local?.agents);
+
+    // Update active config with merged reflection for current project
+    this.config.reflection = mergedReflection;
 
     const overriddenAgents = Object.keys(local?.agents || {});
     if (local) {
@@ -324,6 +358,7 @@ export default class ConductorExtension implements Extension {
   }
 
   getAgents(context: ExtensionContext): AgentProfile[] {
+    if (!this.config) return this.agents;
     const projectDir = context.getProjectDir();
     if (projectDir && projectDir !== this.currentProjectDir) {
       // Project directory changed since last refresh — refresh agents
@@ -333,6 +368,7 @@ export default class ConductorExtension implements Extension {
   }
 
   async onProjectStarted(event: { readonly baseDir: string }, context: ExtensionContext): Promise<void> {
+    if (!this.config) return;
     const projectDir = event.baseDir;
     if (projectDir && projectDir !== this.currentProjectDir) {
       context.log(`[Conductor] project started: ${path.basename(projectDir)}`, 'info');
@@ -472,6 +508,22 @@ export default class ConductorExtension implements Extension {
     return {};
   }
 
+  async onAgentStepFinished(
+    event: AgentStepFinishedEvent,
+    _context: ExtensionContext
+  ): Promise<void | Partial<AgentStepFinishedEvent>> {
+    if (!this.config.reflection?.enabled) return;
+
+    const interval = this.config.reflection?.interval ?? 10;
+    if (interval < 2) return;
+
+    const profileId = event.agentProfile.id;
+    const currentCount = this.stepCount.get(profileId) ?? 0;
+    this.stepCount.set(profileId, currentCount + 1);
+
+    return event;
+  }
+
   async onAgentProfileUpdated(
     context: ExtensionContext,
     agentId: string,
@@ -583,6 +635,33 @@ export default class ConductorExtension implements Extension {
             event.remindersContent = customReminders;
           } else {
             event.remindersContent += customReminders;
+          }
+        }
+      }
+
+      if (this.config.reflection?.enabled) {
+        const interval = this.config.reflection?.interval ?? 10;
+        const profileId = event.profile.id;
+        const currentCount = this.stepCount.get(profileId) ?? 0;
+        const lastReflected = this.lastReflectionStep.get(profileId) ?? 0;
+
+        if (interval >= 2 && currentCount > 0 && currentCount - lastReflected >= interval) {
+          this.lastReflectionStep.set(profileId, currentCount);
+
+          const reflectionPrompt = `\n<ThisIsImportant>\n<Reminder>\n⏸️ **REFLECTION CHECKPOINT** — You have completed ${interval} steps since the last checkpoint. Pause and reflect:
+
+1. **Progress**: What have you accomplished so far? Summarize key outcomes.
+2. **Alignment**: Are you still on track with the original brief/task? Has the scope drifted?
+3. **Issues**: Are there any blockers, unexpected complications, or diminishing returns?
+4. **Next Steps**: Should you continue as planned, adjust your approach, or conclude?
+
+Be honest and concise. If you're off track, course-correct now.
+</Reminder>\n</ThisIsImportant>`;
+
+          if (event.profile.id === 'conductor') {
+            event.remindersContent = reflectionPrompt + (event.remindersContent || '');
+          } else {
+            event.remindersContent += reflectionPrompt;
           }
         }
       }
