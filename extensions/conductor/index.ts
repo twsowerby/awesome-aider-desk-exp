@@ -484,6 +484,10 @@ export default class ConductorExtension implements Extension {
   }
 
   async onAgentStarted(event: AgentStartedEvent, context: ExtensionContext): Promise<Partial<AgentStartedEvent>> {
+    // Capture and reset the flag immediately to prevent it getting stuck
+    const wasTemplateReplaced = this.promptTemplateReplaced;
+    this.promptTemplateReplaced = false;
+
     const agentId = event.agentProfile?.id;
     if (!agentId) return {};
 
@@ -503,11 +507,10 @@ export default class ConductorExtension implements Extension {
     // Inject agent-specific prompt content
     try {
       const existingPrompt = event.systemPrompt || '';
-      if (this.promptTemplateReplaced) {
+      if (wasTemplateReplaced) {
         // Workflow already in template, only add directives
         const directives = prompts.getAgentDirectives(agentId);
         if (directives) result.systemPrompt = `${existingPrompt}\n\n${directives}`;
-        this.promptTemplateReplaced = false;
       } else {
         // Fallback: add both directives and workflow
         const augmentation = prompts.getAgentPromptAugmentation(agentId, this.extensionDir);
@@ -937,6 +940,8 @@ Be honest and concise. If you're off track, course-correct now.
         return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
       }
 
+      // Note: API reference docs incorrectly show generateText(modelId: string, ...),
+      // but the actual runtime signature requires an AgentProfile object as the first argument.
       const generated = await taskContext.generateText(commitProfile, systemPrompt, userPrompt);
       if (generated?.trim()) {
         return generated.trim();
