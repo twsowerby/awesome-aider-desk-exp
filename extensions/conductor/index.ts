@@ -561,27 +561,37 @@ export default class ConductorExtension implements Extension {
     return updatedProfile;
   }
 
-  async onPromptTemplate(event: PromptTemplateEvent, _context: ExtensionContext): Promise<Partial<PromptTemplateEvent> | void> {
-    if (event.name === 'system-prompt') {
-      const promptPath = path.join(this.extensionDir, 'prompts', 'system-prompt.md');
-      let prompt = fs.readFileSync(promptPath, 'utf-8');
+  async onPromptTemplate(event: PromptTemplateEvent, context: ExtensionContext): Promise<Partial<PromptTemplateEvent> | void> {
+    try {
+      if (event.name === 'system-prompt') {
+        const promptPath = path.join(this.extensionDir, 'prompts', 'system-prompt.md');
+        let prompt = fs.readFileSync(promptPath, 'utf-8');
 
-      // Extract dynamic values from the original rendered prompt
-      const dateMatch = event.prompt.match(/<CurrentDate>([^<]*)<\/CurrentDate>/);
-      const osMatch = event.prompt.match(/<OperatingSystem>([^<]*)<\/OperatingSystem>/);
-      const dirMatch = event.prompt.match(/<ProjectWorkingDirectory>([^<]*)<\/ProjectWorkingDirectory>/);
+        // Extract dynamic values from the original rendered prompt
+        const dateMatch = event.prompt.match(/<CurrentDate>([^<]*)<\/CurrentDate>/);
+        const osMatch = event.prompt.match(/<OperatingSystem>([^<]*)<\/OperatingSystem>/);
+        const dirMatch = event.prompt.match(/<ProjectWorkingDirectory>([^<]*)<\/ProjectWorkingDirectory>/);
 
-      if (dateMatch) prompt = prompt.replace(/\{\{CURRENT_DATE\}\}/g, dateMatch[1]);
-      if (osMatch) prompt = prompt.replace(/\{\{OPERATING_SYSTEM\}\}/g, osMatch[1]);
-      if (dirMatch) prompt = prompt.replace(/\{\{PROJECT_WORKING_DIRECTORY\}\}/g, dirMatch[1]);
+        if (dateMatch) prompt = prompt.replace(/\{\{CURRENT_DATE\}\}/g, () => dateMatch[1]);
+        if (osMatch) prompt = prompt.replace(/\{\{OPERATING_SYSTEM\}\}/g, () => osMatch[1]);
+        if (dirMatch) prompt = prompt.replace(/\{\{PROJECT_WORKING_DIRECTORY\}\}/g, () => dirMatch[1]);
 
-      return { prompt };
-    }
+        const remaining = prompt.match(/\{\{[A-Z_]+\}\}/g);
+        if (remaining) {
+          context.log(`[Conductor] onPromptTemplate: unresolved placeholders: ${remaining.join(', ')}`, 'warn');
+        }
 
-    if (event.name === 'workflow') {
-      const workflowPath = path.join(this.extensionDir, 'prompts', 'workflow.md');
-      const prompt = fs.readFileSync(workflowPath, 'utf-8');
-      return { prompt };
+        return { prompt };
+      }
+
+      if (event.name === 'workflow') {
+        const workflowPath = path.join(this.extensionDir, 'prompts', 'workflow.md');
+        const prompt = fs.readFileSync(workflowPath, 'utf-8');
+        return { prompt };
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      context.log(`[Conductor] onPromptTemplate failed: ${msg}`, 'error');
     }
 
     return void 0;
