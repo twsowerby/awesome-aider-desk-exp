@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
 import * as git from './git';
+import * as prompts from './prompts';
 
 /** Extended profile that includes commit-specific model config. These fields are injected at runtime by loadAgents() spreading AgentDefaults, which is why they require a cast. */
 interface ConductorAgentProfile extends AgentProfile {
@@ -487,26 +488,40 @@ export default class ConductorExtension implements Extension {
     if (!agentId) return {};
 
     const conductorAgent = this.agents.find(a => a.id === agentId);
-    if (!conductorAgent) return {};
+
+    // Build the return object
+    const result: Partial<AgentStartedEvent> = {};
 
     // Check if enabledServers needs to be corrected
-    const currentServers = event.agentProfile.enabledServers || [];
-    const expectedServers = conductorAgent.enabledServers || [];
+    if (conductorAgent) {
+      const currentServers = event.agentProfile.enabledServers || [];
+      const expectedServers = conductorAgent.enabledServers || [];
 
-    if (JSON.stringify(currentServers) !== JSON.stringify(expectedServers)) {
-      context.log(
-        `[Conductor] onAgentStarted: correcting enabledServers for ${agentId} from [${currentServers}] to [${expectedServers}]`,
-        'info'
-      );
-      return {
-        agentProfile: {
+      if (JSON.stringify(currentServers) !== JSON.stringify(expectedServers)) {
+        context.log(
+          `[Conductor] onAgentStarted: correcting enabledServers for ${agentId} from [${currentServers}] to [${expectedServers}]`,
+          'info'
+        );
+        result.agentProfile = {
           ...event.agentProfile,
           enabledServers: expectedServers,
-        },
-      };
+        };
+      }
     }
 
-    return {};
+    // Inject per-agent directives and workflow
+    try {
+      const augmentation = prompts.getAgentPromptAugmentation(agentId, this.extensionDir);
+      if (augmentation) {
+        const existingPrompt = event.systemPrompt || '';
+        result.systemPrompt = existingPrompt + '\n\n' + augmentation;
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      context.log(`[Conductor] onAgentStarted: failed to inject agent prompt for ${agentId}: ${msg}`, 'error');
+    }
+
+    return result;
   }
 
   async onAgentStepFinished(
@@ -564,29 +579,7 @@ export default class ConductorExtension implements Extension {
   async onPromptTemplate(event: PromptTemplateEvent, context: ExtensionContext): Promise<Partial<PromptTemplateEvent> | void> {
     try {
       if (event.name === 'system-prompt') {
-        const promptPath = path.join(this.extensionDir, 'prompts', 'system-prompt.md');
-        let prompt = fs.readFileSync(promptPath, 'utf-8');
-
-        // Extract dynamic values from the original rendered prompt
-        const dateMatch = event.prompt.match(/<CurrentDate>([^<]*)<\/CurrentDate>/);
-        const osMatch = event.prompt.match(/<OperatingSystem>([^<]*)<\/OperatingSystem>/);
-        const dirMatch = event.prompt.match(/<ProjectWorkingDirectory>([^<]*)<\/ProjectWorkingDirectory>/);
-
-        if (dateMatch) prompt = prompt.replace(/\{\{CURRENT_DATE\}\}/g, () => dateMatch[1]);
-        if (osMatch) prompt = prompt.replace(/\{\{OPERATING_SYSTEM\}\}/g, () => osMatch[1]);
-        if (dirMatch) prompt = prompt.replace(/\{\{PROJECT_WORKING_DIRECTORY\}\}/g, () => dirMatch[1]);
-
-        const remaining = prompt.match(/\{\{[A-Z_]+\}\}/g);
-        if (remaining) {
-          context.log(`[Conductor] onPromptTemplate: unresolved placeholders: ${remaining.join(', ')}`, 'warn');
-        }
-
-        return { prompt };
-      }
-
-      if (event.name === 'workflow') {
-        const workflowPath = path.join(this.extensionDir, 'prompts', 'workflow.md');
-        const prompt = fs.readFileSync(workflowPath, 'utf-8');
+        const prompt = prompts.renderSystemPrompt(this.extensionDir, event.data);
         return { prompt };
       }
     } catch (e: unknown) {
