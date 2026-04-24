@@ -6,6 +6,7 @@ import type {
   Extension,
   ExtensionContext,
   ImportantRemindersEvent,
+  PromptTemplateEvent,
   SubagentFinishedEvent,
   ToolDefinition,
   UIComponentDefinition
@@ -558,6 +559,32 @@ export default class ConductorExtension implements Extension {
       }
     }
     return updatedProfile;
+  }
+
+  async onPromptTemplate(event: PromptTemplateEvent, _context: ExtensionContext): Promise<Partial<PromptTemplateEvent> | void> {
+    if (event.name === 'system-prompt') {
+      const promptPath = path.join(this.extensionDir, 'prompts', 'system-prompt.md');
+      let prompt = fs.readFileSync(promptPath, 'utf-8');
+
+      // Extract dynamic values from the original rendered prompt
+      const dateMatch = event.prompt.match(/<CurrentDate>([^<]*)<\/CurrentDate>/);
+      const osMatch = event.prompt.match(/<OperatingSystem>([^<]*)<\/OperatingSystem>/);
+      const dirMatch = event.prompt.match(/<ProjectWorkingDirectory>([^<]*)<\/ProjectWorkingDirectory>/);
+
+      if (dateMatch) prompt = prompt.replace(/\{\{CURRENT_DATE\}\}/g, dateMatch[1]);
+      if (osMatch) prompt = prompt.replace(/\{\{OPERATING_SYSTEM\}\}/g, osMatch[1]);
+      if (dirMatch) prompt = prompt.replace(/\{\{PROJECT_WORKING_DIRECTORY\}\}/g, dirMatch[1]);
+
+      return { prompt };
+    }
+
+    if (event.name === 'workflow') {
+      const workflowPath = path.join(this.extensionDir, 'prompts', 'workflow.md');
+      const prompt = fs.readFileSync(workflowPath, 'utf-8');
+      return { prompt };
+    }
+
+    return void 0;
   }
 
   private async persistAgentOverride(context: ExtensionContext, agentId: string, updatedProfile: AgentProfile): Promise<void> {
