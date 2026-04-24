@@ -566,6 +566,8 @@ export default class ConductorExtension implements Extension {
     return updatedProfile;
   }
 
+  // onPromptTemplate handles the main conductor system prompt (universal instructions + workflow).
+  // onAgentStarted handles per-agent directives for subagents.
   async onPromptTemplate(event: PromptTemplateEvent, context: ExtensionContext): Promise<Partial<PromptTemplateEvent> | void> {
     try {
       if (event.name === 'system-prompt') {
@@ -575,7 +577,7 @@ export default class ConductorExtension implements Extension {
           workflow,
         ].filter(Boolean).join('\n\n');
 
-        return { prompt: event.prompt + '\n\n' + augmentation };
+        return { prompt: (event.prompt || '') + '\n\n' + augmentation };
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
