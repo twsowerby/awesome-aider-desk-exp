@@ -32,6 +32,14 @@ export function isGitRepo(projectDir: string): boolean {
   return runGit(projectDir, 'rev-parse --is-inside-work-tree').success;
 }
 
+export function getGitRoot(projectDir: string): string | null {
+  const result = runGit(projectDir, 'rev-parse --show-toplevel');
+  if (result.success && result.output) {
+    return result.output.trim();
+  }
+  return null;
+}
+
 export function getChangedFiles(projectDir: string): string[] {
   const unstaged = parseFileList(runGit(projectDir, 'diff --name-only'));
   const staged = parseFileList(runGit(projectDir, 'diff --cached --name-only'));

@@ -1,6 +1,37 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import Handlebars from 'handlebars';
+import type { AgentProfile } from '@aiderdesk/extensions';
+
+export const TOOL_CONSTANTS = {
+  TOOL_GROUP_NAME_SEPARATOR: '---',
+  TODO_TOOL_GROUP_NAME: 'todo',
+  TODO_TOOL_GET_ITEMS: 'get_items',
+  TODO_TOOL_CLEAR_ITEMS: 'clear_items',
+  TODO_TOOL_SET_ITEMS: 'set_items',
+  TODO_TOOL_UPDATE_ITEM_COMPLETION: 'update_item_completion',
+  MEMORY_TOOL_GROUP_NAME: 'memory',
+  MEMORY_TOOL_RETRIEVE: 'retrieve_memory',
+  MEMORY_TOOL_STORE: 'store_memory',
+  MEMORY_TOOL_LIST: 'list_memories',
+  MEMORY_TOOL_DELETE: 'delete_memory',
+  SUBAGENTS_TOOL_GROUP_NAME: 'subagents',
+  SUBAGENTS_TOOL_RUN_TASK: 'run_task',
+  AIDER_TOOL_GROUP_NAME: 'aider',
+  AIDER_TOOL_RUN_PROMPT: 'run_prompt',
+  AIDER_TOOL_ADD_CONTEXT_FILES: 'add_context_files',
+  AIDER_TOOL_GET_CONTEXT_FILES: 'get_context_files',
+  AIDER_TOOL_DROP_CONTEXT_FILES: 'drop_context_files',
+  POWER_TOOL_GROUP_NAME: 'power',
+  POWER_TOOL_SEMANTIC_SEARCH: 'semantic_search',
+  POWER_TOOL_FILE_READ: 'file_read',
+  POWER_TOOL_FILE_WRITE: 'file_write',
+  POWER_TOOL_FILE_EDIT: 'file_edit',
+  POWER_TOOL_GLOB: 'glob',
+  POWER_TOOL_GREP: 'grep',
+  POWER_TOOL_BASH: 'bash',
+};
 
 // Cached compiled template
 let systemPromptTemplate: Handlebars.TemplateDelegate | null = null;
@@ -23,6 +54,88 @@ export function compileSystemTemplate(extensionDir: string): Handlebars.Template
 export function renderSystemPrompt(extensionDir: string, data: unknown): string {
   const template = compileSystemTemplate(extensionDir);
   return template(data);
+}
+
+/**
+ * Builds the data context for the system-prompt Handlebars template.
+ * Uses ExtensionContext and AgentProfile as primary sources.
+ * Falls back to event.data for fields we can't derive (like rulesFiles).
+ */
+export function buildTemplateData(
+  projectDir: string,
+  agentProfile: AgentProfile | null,
+  extensionDir: string,
+  eventData?: unknown
+): Record<string, unknown> {
+  // Try to use event.data as a base for fields we can't derive ourselves
+  const base = (typeof eventData === 'object' && eventData !== null)
+    ? eventData as Record<string, unknown>
+    : {};
+
+  // Tool permissions from agent profile
+  const usePowerTools = agentProfile?.usePowerTools ?? false;
+  const useAiderTools = agentProfile?.useAiderTools ?? false;
+  const useTodoTools = agentProfile?.useTodoTools ?? false;
+  const useSubagents = agentProfile?.useSubagents ?? false;
+  const useMemoryTools = agentProfile?.useMemoryTools ?? false;
+
+  // Tool approvals — check if specific memory tools are allowed
+  const toolApprovals = (agentProfile?.toolApprovals ?? {}) as Record<string, unknown>;
+  const isNever = (key: string) => toolApprovals[key] === 'never';
+  const isAlways = (key: string) => toolApprovals[key] === 'always';
+
+  // Date and OS
+  const currentDate = new Date().toLocaleDateString('en-US', {
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+  const osName = `${os.type()} ${os.release()}`;
+
+  // Custom instructions and workflow from agent profile
+  const customInstructions = (base.customInstructions as string) ?? agentProfile?.customInstructions ?? '';
+  const workflow = (base.workflow as string) ?? getAgentWorkflow(agentProfile?.id ?? '', extensionDir);
+
+  // Rules files — try from event.data first, then empty string
+  const rulesFiles = (base.rulesFiles as string) ?? '';
+
+  // Git root directory
+  const projectGitRootDirectory = (base.projectGitRootDirectory as string) ?? '';
+
+  return {
+    projectDir,
+    toolPermissions: {
+      memory: {
+        enabled: useMemoryTools,
+        retrieveAllowed: !isNever('memory---retrieve_memory'),
+        storeAllowed: !isNever('memory---store_memory'),
+        listAllowed: !isNever('memory---list_memories'),
+        deleteAllowed: !isNever('memory---delete_memory'),
+      },
+      subagents: useSubagents,
+      todoTools: useTodoTools,
+      aiderTools: useAiderTools,
+      powerTools: {
+        anyEnabled: usePowerTools,
+        semanticSearch: usePowerTools,
+        fileRead: usePowerTools,
+        fileWrite: usePowerTools,
+        fileEdit: usePowerTools,
+        glob: usePowerTools,
+        grep: usePowerTools,
+        bash: usePowerTools,
+      },
+    },
+    toolConstants: TOOL_CONSTANTS,
+    currentDate,
+    osName,
+    taskDir: (base.taskDir as string) ?? projectDir,
+    projectGitRootDirectory: projectGitRootDirectory || undefined,
+    rulesFiles,
+    customInstructions: customInstructions || undefined,
+    workflow,
+  };
 }
 
 /**
