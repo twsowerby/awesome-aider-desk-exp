@@ -67,22 +67,15 @@ export function buildTemplateData(
   extensionDir: string,
   eventData?: unknown
 ): Record<string, unknown> {
-  // Try to use event.data as a base for fields we can't derive ourselves
   const base = (typeof eventData === 'object' && eventData !== null)
     ? eventData as Record<string, unknown>
     : {};
 
-  // Tool permissions from agent profile
-  const usePowerTools = agentProfile?.usePowerTools ?? false;
-  const useAiderTools = agentProfile?.useAiderTools ?? false;
-  const useTodoTools = agentProfile?.useTodoTools ?? false;
-  const useSubagents = agentProfile?.useSubagents ?? false;
-  const useMemoryTools = agentProfile?.useMemoryTools ?? false;
+  // Tool permissions and approvals
+  const toolApprovals = (agentProfile?.toolApprovals ?? {}) as Record<string, string>;
+  const isAllowed = (key: string) => toolApprovals[key] !== 'never';
 
-  // Tool approvals — check if specific memory tools are allowed
-  const toolApprovals = (agentProfile?.toolApprovals ?? {}) as Record<string, unknown>;
-  const isNever = (key: string) => toolApprovals[key] === 'never';
-  const isAlways = (key: string) => toolApprovals[key] === 'always';
+  const usePowerTools = agentProfile?.usePowerTools ?? false;
 
   // Date and OS
   const currentDate = new Date().toLocaleDateString('en-US', {
@@ -93,29 +86,19 @@ export function buildTemplateData(
   });
   const osName = `${os.type()} ${os.release()}`;
 
-  // Custom instructions and workflow from agent profile
-  const customInstructions = (base.customInstructions as string) ?? agentProfile?.customInstructions ?? '';
-  const workflow = (base.workflow as string) ?? getAgentWorkflow(agentProfile?.id ?? '', extensionDir);
-
-  // Rules files — try from event.data first, then empty string
-  const rulesFiles = (base.rulesFiles as string) ?? '';
-
-  // Git root directory
-  const projectGitRootDirectory = (base.projectGitRootDirectory as string) ?? '';
-
   return {
     projectDir,
     toolPermissions: {
       memory: {
-        enabled: useMemoryTools,
-        retrieveAllowed: !isNever('memory---retrieve_memory'),
-        storeAllowed: !isNever('memory---store_memory'),
-        listAllowed: !isNever('memory---list_memories'),
-        deleteAllowed: !isNever('memory---delete_memory'),
+        enabled: agentProfile?.useMemoryTools ?? false,
+        retrieveAllowed: isAllowed('memory---retrieve_memory'),
+        storeAllowed: isAllowed('memory---store_memory'),
+        listAllowed: isAllowed('memory---list_memories'),
+        deleteAllowed: isAllowed('memory---delete_memory'),
       },
-      subagents: useSubagents,
-      todoTools: useTodoTools,
-      aiderTools: useAiderTools,
+      subagents: agentProfile?.useSubagents ?? false,
+      todoTools: agentProfile?.useTodoTools ?? false,
+      aiderTools: agentProfile?.useAiderTools ?? false,
       powerTools: {
         anyEnabled: usePowerTools,
         semanticSearch: usePowerTools,
@@ -131,10 +114,10 @@ export function buildTemplateData(
     currentDate,
     osName,
     taskDir: (base.taskDir as string) ?? projectDir,
-    projectGitRootDirectory: projectGitRootDirectory || undefined,
-    rulesFiles,
-    customInstructions: customInstructions || undefined,
-    workflow,
+    projectGitRootDirectory: (base.projectGitRootDirectory as string) || undefined,
+    rulesFiles: (base.rulesFiles as string) ?? '',
+    customInstructions: (base.customInstructions as string) ?? agentProfile?.customInstructions ?? undefined,
+    workflow: (base.workflow as string) ?? getAgentWorkflow(agentProfile?.id ?? '', extensionDir),
   };
 }
 

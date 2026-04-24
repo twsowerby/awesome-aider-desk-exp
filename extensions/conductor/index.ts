@@ -1,5 +1,4 @@
 import type {
-  AgentFinishedEvent,
   AgentProfile,
   AgentStartedEvent,
   AgentStepFinishedEvent,
@@ -13,7 +12,6 @@ import type {
 } from '@aiderdesk/extensions';
 import { exec, execSync } from 'child_process';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { z } from 'zod';
 import * as git from './git';
@@ -490,50 +488,33 @@ export default class ConductorExtension implements Extension {
     if (!agentId) return {};
 
     const conductorAgent = this.agents.find(a => a.id === agentId);
-
-    // Build the return object
     const result: Partial<AgentStartedEvent> = {};
 
-    // Check if enabledServers needs to be corrected
+    // Correct enabledServers if needed
     if (conductorAgent) {
       const currentServers = event.agentProfile.enabledServers || [];
       const expectedServers = conductorAgent.enabledServers || [];
 
       if (JSON.stringify(currentServers) !== JSON.stringify(expectedServers)) {
-        context.log(
-          `[Conductor] onAgentStarted: correcting enabledServers for ${agentId} from [${currentServers}] to [${expectedServers}]`,
-          'info'
-        );
-        result.agentProfile = {
-          ...event.agentProfile,
-          enabledServers: expectedServers,
-        };
+        result.agentProfile = { ...event.agentProfile, enabledServers: expectedServers };
       }
     }
 
-    // Inject per-agent directives and workflow
+    // Inject agent-specific prompt content
     try {
+      const existingPrompt = event.systemPrompt || '';
       if (this.promptTemplateReplaced) {
-        // onPromptTemplate already included workflow and customInstructions in the rendered template
-        // Only add agent-specific directives (not workflow) to avoid duplication
+        // Workflow already in template, only add directives
         const directives = prompts.getAgentDirectives(agentId);
-        if (directives) {
-          const existingPrompt = event.systemPrompt || '';
-          result.systemPrompt = existingPrompt + '\n\n' + directives;
-        }
-        // Reset the flag
+        if (directives) result.systemPrompt = `${existingPrompt}\n\n${directives}`;
         this.promptTemplateReplaced = false;
       } else {
-        // Fallback: onPromptTemplate didn't fire, add both directives and workflow
+        // Fallback: add both directives and workflow
         const augmentation = prompts.getAgentPromptAugmentation(agentId, this.extensionDir);
-        if (augmentation) {
-          const existingPrompt = event.systemPrompt || '';
-          result.systemPrompt = existingPrompt + '\n\n' + augmentation;
-        }
+        if (augmentation) result.systemPrompt = `${existingPrompt}\n\n${augmentation}`;
       }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      context.log(`[Conductor] onAgentStarted: failed to inject agent prompt for ${agentId}: ${msg}`, 'error');
+      context.log(`[Conductor] onAgentStarted: prompt injection failed for ${agentId}`, 'error');
     }
 
     return result;
