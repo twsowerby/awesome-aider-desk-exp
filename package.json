@@ -20,7 +20,6 @@
     "url": "https://github.com/klocus/awesome-aider-desk"
   },
   "dependencies": {
-    "handlebars": "^4.7.9",
     "zod": "^3.22.4"
   },
   "peerDependencies": {

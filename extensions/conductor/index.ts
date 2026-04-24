@@ -282,7 +282,6 @@ export default class ConductorExtension implements Extension {
   private currentProjectDir: string = '';
   private stepCount: Map<string, number> = new Map();
   private lastReflectionStep: Map<string, number> = new Map();
-  private promptTemplateReplaced: boolean = false;
 
   async onLoad(context: ExtensionContext): Promise<void> {
     this.extensionDir = path.resolve(__dirname);
@@ -484,10 +483,6 @@ export default class ConductorExtension implements Extension {
   }
 
   async onAgentStarted(event: AgentStartedEvent, context: ExtensionContext): Promise<Partial<AgentStartedEvent>> {
-    // Capture and reset the flag immediately to prevent it getting stuck
-    const wasTemplateReplaced = this.promptTemplateReplaced;
-    this.promptTemplateReplaced = false;
-
     const agentId = event.agentProfile?.id;
     if (!agentId) return {};
 
@@ -504,20 +499,16 @@ export default class ConductorExtension implements Extension {
       }
     }
 
-    // Inject agent-specific prompt content
+    // Inject agent-specific directives and workflow
     try {
-      const existingPrompt = event.systemPrompt || '';
-      if (wasTemplateReplaced) {
-        // Workflow already in template, only add directives
-        const directives = prompts.getAgentDirectives(agentId);
-        if (directives) result.systemPrompt = `${existingPrompt}\n\n${directives}`;
-      } else {
-        // Fallback: add both directives and workflow
-        const augmentation = prompts.getAgentPromptAugmentation(agentId, this.extensionDir);
-        if (augmentation) result.systemPrompt = `${existingPrompt}\n\n${augmentation}`;
+      const augmentation = prompts.getAgentPromptAugmentation(agentId, this.extensionDir);
+      if (augmentation) {
+        const existingPrompt = event.systemPrompt || '';
+        result.systemPrompt = existingPrompt + '\n\n' + augmentation;
       }
     } catch (e: unknown) {
-      context.log(`[Conductor] onAgentStarted: prompt injection failed for ${agentId}`, 'error');
+      const msg = e instanceof Error ? e.message : String(e);
+      context.log(`[Conductor] onAgentStarted: failed to inject agent prompt for ${agentId}: ${msg}`, 'error');
     }
 
     return result;
@@ -578,36 +569,13 @@ export default class ConductorExtension implements Extension {
   async onPromptTemplate(event: PromptTemplateEvent, context: ExtensionContext): Promise<Partial<PromptTemplateEvent> | void> {
     try {
       if (event.name === 'system-prompt') {
-        // Get the current agent profile to determine tool permissions
-        let agentProfile: AgentProfile | null = null;
-        const taskContext = context.getTaskContext();
-        if (taskContext) {
-          try {
-            agentProfile = await taskContext.getTaskAgentProfile();
-          } catch {
-            // Fall back to matching by the conductor agent if available
-          }
-        }
+        const workflow = prompts.getAgentWorkflow('conductor', this.extensionDir);
+        const augmentation = [
+          prompts.CONDUCTOR_UNIVERSAL_INSTRUCTIONS,
+          workflow,
+        ].filter(Boolean).join('\n\n');
 
-        // If we couldn't get the profile from task context, try to find it from our agents list
-        if (!agentProfile) {
-          // Use the conductor profile as default fallback
-          agentProfile = this.agents.find(a => a.id === 'conductor') ?? null;
-        }
-
-        const data = prompts.buildTemplateData(
-          context.getProjectDir(),
-          agentProfile,
-          this.extensionDir,
-          event.data
-        );
-
-        const prompt = prompts.renderSystemPrompt(this.extensionDir, data);
-
-        // Mark that we replaced the prompt so onAgentStarted knows not to re-inject workflow
-        this.promptTemplateReplaced = true;
-
-        return { prompt };
+        return { prompt: event.prompt + '\n\n' + augmentation };
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);

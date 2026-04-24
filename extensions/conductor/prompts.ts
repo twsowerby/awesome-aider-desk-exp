@@ -1,125 +1,28 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
-import Handlebars from 'handlebars';
-import type { AgentProfile } from '@aiderdesk/extensions';
 
-export const TOOL_CONSTANTS = {
-  TOOL_GROUP_NAME_SEPARATOR: '---',
-  TODO_TOOL_GROUP_NAME: 'todo',
-  TODO_TOOL_GET_ITEMS: 'get_items',
-  TODO_TOOL_CLEAR_ITEMS: 'clear_items',
-  TODO_TOOL_SET_ITEMS: 'set_items',
-  TODO_TOOL_UPDATE_ITEM_COMPLETION: 'update_item_completion',
-  MEMORY_TOOL_GROUP_NAME: 'memory',
-  MEMORY_TOOL_RETRIEVE: 'retrieve_memory',
-  MEMORY_TOOL_STORE: 'store_memory',
-  MEMORY_TOOL_LIST: 'list_memories',
-  MEMORY_TOOL_DELETE: 'delete_memory',
-  SUBAGENTS_TOOL_GROUP_NAME: 'subagents',
-  SUBAGENTS_TOOL_RUN_TASK: 'run_task',
-  AIDER_TOOL_GROUP_NAME: 'aider',
-  AIDER_TOOL_RUN_PROMPT: 'run_prompt',
-  AIDER_TOOL_ADD_CONTEXT_FILES: 'add_context_files',
-  AIDER_TOOL_GET_CONTEXT_FILES: 'get_context_files',
-  AIDER_TOOL_DROP_CONTEXT_FILES: 'drop_context_files',
-  POWER_TOOL_GROUP_NAME: 'power',
-  POWER_TOOL_SEMANTIC_SEARCH: 'semantic_search',
-  POWER_TOOL_FILE_READ: 'file_read',
-  POWER_TOOL_FILE_WRITE: 'file_write',
-  POWER_TOOL_FILE_EDIT: 'file_edit',
-  POWER_TOOL_GLOB: 'glob',
-  POWER_TOOL_GREP: 'grep',
-  POWER_TOOL_BASH: 'bash',
-};
+export const CONDUCTOR_UNIVERSAL_INSTRUCTIONS = `
+<ConductorRole>
+  <Objective>You are the **Conductor** — you plan, delegate, and verify. You NEVER edit files directly. All code changes are delegated to specialist subagents.</Objective>
+</ConductorRole>
 
-// Cached compiled template
-let systemPromptTemplate: Handlebars.TemplateDelegate | null = null;
+<CoreDirectives>
+  <Directive id="delegate-first">Gather context by delegating to the Investigator. Their output satisfies this requirement. Use your own tools only for targeted spot-checks when writing subagent briefs.</Directive>
+  <Directive id="trust-subagents">Information returned by delegated subagents is verified context. Do not re-investigate or re-verify with your own tools unless there is a specific, stated reason to doubt it.</Directive>
+  <Directive id="spec-first">Create/update the SPEC.md BEFORE any delegation. The spec is the source of truth for the current work.</Directive>
+  <Directive id="wait-for-approval">Present the plan and STOP. Wait for user approval before delegating implementation tasks. Delegating to the Investigator for initial context gathering does NOT require approval.</Directive>
+  <Directive id="post-implementation-pipeline">After every implementation wave, run the Post-Implementation Pipeline: Verifier → Code Reviewer → Analyze results.</Directive>
+</CoreDirectives>
 
-/**
- * Compiles the system prompt Handlebars template (cached after first call).
- */
-export function compileSystemTemplate(extensionDir: string): Handlebars.TemplateDelegate {
-  if (!systemPromptTemplate) {
-    const templatePath = path.join(extensionDir, 'prompts', 'system-prompt.hbs');
-    const templateSource = fs.readFileSync(templatePath, 'utf-8');
-    systemPromptTemplate = Handlebars.compile(templateSource);
-  }
-  return systemPromptTemplate;
-}
+<ResponseStyle>
+  <Rule id="conciseness">Keep responses brief (ideally under 4 lines), excluding tool calls/code. Use one-word confirmations like "Done" after successful actions.</Rule>
+  <Rule id="verbosity">Provide additional detail only when asked, reporting errors, or explaining complex plans/findings.</Rule>
+</ResponseStyle>
 
-/**
- * Renders the universal base system prompt using the provided data.
- */
-export function renderSystemPrompt(extensionDir: string, data: unknown): string {
-  const template = compileSystemTemplate(extensionDir);
-  return template(data);
-}
-
-/**
- * Builds the data context for the system-prompt Handlebars template.
- * Uses ExtensionContext and AgentProfile as primary sources.
- * Falls back to event.data for fields we can't derive (like rulesFiles).
- */
-export function buildTemplateData(
-  projectDir: string,
-  agentProfile: AgentProfile | null,
-  extensionDir: string,
-  eventData?: unknown
-): Record<string, unknown> {
-  const base = (typeof eventData === 'object' && eventData !== null)
-    ? eventData as Record<string, unknown>
-    : {};
-
-  // Tool permissions and approvals
-  const toolApprovals = (agentProfile?.toolApprovals ?? {}) as Record<string, string>;
-  const isAllowed = (key: string) => toolApprovals[key] !== 'never';
-
-  const usePowerTools = agentProfile?.usePowerTools ?? false;
-
-  // Date and OS
-  const currentDate = new Date().toLocaleDateString('en-US', {
-    weekday: 'short',
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
-  const osName = `${os.type()} ${os.release()}`;
-
-  return {
-    projectDir,
-    toolPermissions: {
-      memory: {
-        enabled: agentProfile?.useMemoryTools ?? false,
-        retrieveAllowed: isAllowed('memory---retrieve_memory'),
-        storeAllowed: isAllowed('memory---store_memory'),
-        listAllowed: isAllowed('memory---list_memories'),
-        deleteAllowed: isAllowed('memory---delete_memory'),
-      },
-      subagents: agentProfile?.useSubagents ?? false,
-      todoTools: agentProfile?.useTodoTools ?? false,
-      aiderTools: agentProfile?.useAiderTools ?? false,
-      powerTools: {
-        anyEnabled: usePowerTools,
-        semanticSearch: usePowerTools,
-        fileRead: usePowerTools,
-        fileWrite: usePowerTools,
-        fileEdit: usePowerTools,
-        glob: usePowerTools,
-        grep: usePowerTools,
-        bash: usePowerTools,
-      },
-    },
-    toolConstants: TOOL_CONSTANTS,
-    currentDate,
-    osName,
-    taskDir: (base.taskDir as string) ?? projectDir,
-    projectGitRootDirectory: (base.projectGitRootDirectory as string) || undefined,
-    rulesFiles: (base.rulesFiles as string) ?? '',
-    customInstructions: (base.customInstructions as string) ?? agentProfile?.customInstructions ?? undefined,
-    workflow: (base.workflow as string) ?? getAgentWorkflow(agentProfile?.id ?? '', extensionDir),
-  };
-}
+<RefusalPolicy>
+  <Rule>When unable to comply, state inability clearly in 1-2 sentences and offer alternatives if possible.</Rule>
+</RefusalPolicy>
+`;
 
 /**
  * Per-agent directive definitions.
