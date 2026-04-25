@@ -16,6 +16,8 @@ import * as path from 'path';
 import { z } from 'zod';
 import * as git from './git';
 import * as prompts from './prompts';
+import { handlePromptTemplate } from './prompts/strip';
+import { handleAgentStarted } from './prompts/inject';
 
 /** Extended profile that includes commit-specific model config. These fields are injected at runtime by loadAgents() spreading AgentDefaults, which is why they require a cast. */
 interface ConductorAgentProfile extends AgentProfile {
@@ -486,8 +488,11 @@ export default class ConductorExtension implements Extension {
     const agentId = event.agentProfile?.id;
     if (!agentId) return {};
 
+    // Delegate prompt injection to the inject module
+    const promptResult = await handleAgentStarted(event, context);
+
     const conductorAgent = this.agents.find(a => a.id === agentId);
-    const result: Partial<AgentStartedEvent> = {};
+    const result: Partial<AgentStartedEvent> = { ...promptResult };
 
     // Correct enabledServers if needed
     if (conductorAgent) {
@@ -495,20 +500,8 @@ export default class ConductorExtension implements Extension {
       const expectedServers = conductorAgent.enabledServers || [];
 
       if (JSON.stringify(currentServers) !== JSON.stringify(expectedServers)) {
-        result.agentProfile = { ...event.agentProfile, enabledServers: expectedServers };
+        result.agentProfile = { ...event.agentProfile, ...result.agentProfile, enabledServers: expectedServers };
       }
-    }
-
-    // Inject agent-specific directives and workflow
-    try {
-      const augmentation = prompts.getAgentPromptAugmentation(agentId, this.extensionDir);
-      if (augmentation) {
-        const existingPrompt = event.systemPrompt || '';
-        result.systemPrompt = existingPrompt + '\n\n' + augmentation;
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      context.log(`[Conductor] onAgentStarted: failed to inject agent prompt for ${agentId}: ${msg}`, 'error');
     }
 
     return result;
@@ -566,25 +559,8 @@ export default class ConductorExtension implements Extension {
     return updatedProfile;
   }
 
-  // onPromptTemplate handles the main conductor system prompt (universal instructions + workflow).
-  // onAgentStarted handles per-agent directives for subagents.
   async onPromptTemplate(event: PromptTemplateEvent, context: ExtensionContext): Promise<Partial<PromptTemplateEvent> | void> {
-    try {
-      if (event.name === 'system-prompt') {
-        const workflow = prompts.getAgentWorkflow('conductor', this.extensionDir);
-        const augmentation = [
-          prompts.CONDUCTOR_UNIVERSAL_INSTRUCTIONS,
-          workflow,
-        ].filter(Boolean).join('\n\n');
-
-        return { prompt: (event.prompt || '') + '\n\n' + augmentation };
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      context.log(`[Conductor] onPromptTemplate failed: ${msg}`, 'error');
-    }
-
-    return void 0;
+    return handlePromptTemplate(event, context);
   }
 
   private async persistAgentOverride(context: ExtensionContext, agentId: string, updatedProfile: AgentProfile): Promise<void> {
