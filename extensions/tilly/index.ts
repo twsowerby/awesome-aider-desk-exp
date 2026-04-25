@@ -9,6 +9,8 @@ import type {
   UIComponentDefinition
 } from '@aiderdesk/extensions';
 import { z } from 'zod';
+import { handleAgentStarted } from './prompts/inject';
+import { handlePromptTemplate } from './prompts/strip';
 
 export default class TillyExtension implements Extension {
   static metadata = {
@@ -25,12 +27,11 @@ export default class TillyExtension implements Extension {
 
   async onAgentStarted(event: AgentStartedEvent, context: ExtensionContext): Promise<Partial<AgentStartedEvent> | void> {
     context.log(`[Tilly] Agent started: ${event.agentProfile?.name}`, 'info');
-    return undefined;
+    return handleAgentStarted(event, context);
   }
 
-  async onPromptTemplate(event: PromptTemplateEvent, _context: ExtensionContext): Promise<Partial<PromptTemplateEvent> | void> {
-    // Placeholder for prompt augmentation logic
-    return undefined;
+  async onPromptTemplate(event: PromptTemplateEvent, context: ExtensionContext): Promise<Partial<PromptTemplateEvent> | void> {
+    return handlePromptTemplate(event, context);
   }
 
   async onImportantReminders(event: ImportantRemindersEvent, _context: ExtensionContext): Promise<void | Partial<ImportantRemindersEvent>> {
