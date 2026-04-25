@@ -647,7 +647,10 @@ export default class ConductorExtension implements Extension {
           /Post-Implementation Pipeline/i
         ];
 
-        const filteredReminders = reminders.filter(r => !redundantPatterns.some(p => p.test(r)));
+        let filteredReminders = reminders;
+        if (event.profile.id === 'conductor') {
+          filteredReminders = reminders.filter(r => !redundantPatterns.some(p => p.test(r)));
+        }
 
         if (filteredReminders.length > 0) {
           const customReminders = `\n<ThisIsImportant>\n${filteredReminders.map((r: string) => `<Reminder>\n${r}\n</Reminder>`).join('\n')}\n</ThisIsImportant>`;
