@@ -15,7 +15,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
 import * as git from './git';
-import * as prompts from './prompts';
 import { handlePromptTemplate } from './prompts/strip';
 import { handleAgentStarted } from './prompts/inject';
 
@@ -484,15 +483,20 @@ export default class ConductorExtension implements Extension {
     }
   }
 
-  async onAgentStarted(event: AgentStartedEvent, context: ExtensionContext): Promise<Partial<AgentStartedEvent>> {
+  async onAgentStarted(event: AgentStartedEvent, context: ExtensionContext): Promise<Partial<AgentStartedEvent> | void> {
     const agentId = event.agentProfile?.id;
-    if (!agentId) return {};
+    if (!agentId) return;
 
     // Delegate prompt injection to the inject module
     const promptResult = await handleAgentStarted(event, context);
 
     const conductorAgent = this.agents.find(a => a.id === agentId);
-    const result: Partial<AgentStartedEvent> = { ...promptResult };
+    const result: Partial<AgentStartedEvent> = {};
+
+    // If prompt injection returned a result, merge it
+    if (promptResult) {
+      Object.assign(result, promptResult);
+    }
 
     // Correct enabledServers if needed
     if (conductorAgent) {
@@ -504,7 +508,7 @@ export default class ConductorExtension implements Extension {
       }
     }
 
-    return result;
+    return Object.keys(result).length > 0 ? result : undefined;
   }
 
   async onAgentStepFinished(
