@@ -1,7 +1,11 @@
 import type { AgentStartedEvent, AgentProfile, ExtensionContext } from '@aiderdesk/extensions';
 import { AGENT_CONFIGS } from './agent-configs';
 
-function buildAgentPrompt(profile: AgentProfile): string {
+function resolvePlaceholders(text: string, delegateToolName: string): string {
+  return text.replace(/\{\{DELEGATE_TOOL\}\}/g, delegateToolName);
+}
+
+function buildAgentPrompt(profile: AgentProfile, delegateToolName: string = 'delegate-to-agent'): string {
   const config = AGENT_CONFIGS[profile.id];
   if (!config) return '';
 
@@ -34,7 +38,15 @@ function buildAgentPrompt(profile: AgentProfile): string {
     sections.push(`  <RefusalPolicy>\n    <Rule>${config.refusalPolicy}</Rule>\n  </RefusalPolicy>`);
   }
 
-  return '\n\n' + sections.join('\n\n');
+  // Knowledge / CustomInstructions
+  sections.push(`  <Knowledge>
+    <CustomInstructions><![CDATA[
+${config.operationalNotes}
+]]></CustomInstructions>
+  </Knowledge>`);
+
+  const fullPrompt = sections.join('\n\n');
+  return resolvePlaceholders('\n\n' + fullPrompt, delegateToolName);
 }
 
 function insertBeforeClosingTag(prompt: string, content: string): string {
@@ -51,9 +63,11 @@ function insertBeforeClosingTag(prompt: string, content: string): string {
 
 export async function handleAgentStarted(
   event: AgentStartedEvent,
-  context: ExtensionContext
+  context: ExtensionContext,
+  options?: { delegateToolName?: string }
 ): Promise<void | Partial<AgentStartedEvent>> {
-  const agentPrompt = buildAgentPrompt(event.agentProfile);
+  const delegateToolName = options?.delegateToolName ?? 'delegate-to-agent';
+  const agentPrompt = buildAgentPrompt(event.agentProfile, delegateToolName);
   if (!agentPrompt) return;
 
   const basePrompt = event.systemPrompt ?? '';

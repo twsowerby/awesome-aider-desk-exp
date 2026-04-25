@@ -5,4 +5,5 @@ export interface AgentPromptConfig {
   workflow: string;
   responseStyle: { id: string; text: string }[];
   refusalPolicy?: string;
+  operationalNotes: string;
 }

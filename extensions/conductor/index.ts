@@ -487,8 +487,10 @@ export default class ConductorExtension implements Extension {
     const agentId = event.agentProfile?.id;
     if (!agentId) return;
 
+    const delegateToolName = DELEGATE_TOOLS[this.config.delegationMode] ?? this.config.delegationMode;
+
     // Delegate prompt injection to the inject module
-    const promptResult = await handleAgentStarted(event, context);
+    const promptResult = await handleAgentStarted(event, context, { delegateToolName });
 
     const conductorAgent = this.agents.find(a => a.id === agentId);
     const result: Partial<AgentStartedEvent> = {};
