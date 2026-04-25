@@ -53,6 +53,7 @@ interface TillyConfig {
   };
   editorialCheckpointInterval: number;
   contentStyleGuide?: string;
+  atomicCommit?: boolean;
 }
 
 /**
@@ -74,7 +75,7 @@ function deepMerge<T>(target: T, source: any): T {
 export default class TillyExtension implements Extension {
   static metadata = {
     name: 'Tilly',
-    version: '0.2.0',
+    version: '0.2.1',
     description: 'Content production team orchestration extension for AiderDesk',
     author: 'Tom Sowerby',
     capabilities: ['agents', 'tools', 'ui']
@@ -108,7 +109,8 @@ export default class TillyExtension implements Extension {
           useExtensionTools: true,
           autoApprove: false
         },
-        editorialCheckpointInterval: 10
+        editorialCheckpointInterval: 10,
+        atomicCommit: true
       };
       this.config = JSON.parse(JSON.stringify(this.baseConfig));
 
@@ -162,7 +164,7 @@ export default class TillyExtension implements Extension {
         id,
         name: mergedEntry.name,
         customInstructions,
-        atomicCommit: mergedEntry.atomicCommit,
+        atomicCommit: mergedEntry.atomicCommit ?? this.config.atomicCommit,
         enabledServers: mergedEntry.enabledServers || []
       } as TillyAgentProfile;
     });
@@ -208,6 +210,22 @@ Please verify that the content is still aligned with the BRIEF.md and matches th
 </Reminder>\n</ThisIsImportant>`;
       event.remindersContent = (event.remindersContent || '') + checkpoint;
     }
+
+    if (this.config.contentStyleGuide) {
+      const styleGuidePath = path.isAbsolute(this.config.contentStyleGuide) 
+        ? this.config.contentStyleGuide 
+        : path.join(context.getProjectDir(), this.config.contentStyleGuide);
+      
+      if (fs.existsSync(styleGuidePath)) {
+        try {
+          const styleGuide = fs.readFileSync(styleGuidePath, 'utf-8');
+          const reminder = `\n<ThisIsImportant>\n<Reminder>\n📖 **CONTENT STYLE GUIDE**\n\n${styleGuide}\n</Reminder>\n</ThisIsImportant>`;
+          event.remindersContent = (event.remindersContent || '') + reminder;
+        } catch (e: any) {
+          context.log(`[Tilly] Failed to read style guide: ${e.message}`, 'warn');
+        }
+      }
+    }
     
     return event;
   }
@@ -242,12 +260,22 @@ Please verify that the content is still aligned with the BRIEF.md and matches th
         jsx: `(props) => {
           const { Button } = props.ui;
           const { data, executeExtensionAction } = props;
-          if (!data?.exists) return null;
+
+          if (!data?.exists) {
+            return null;
+          }
+
           return (
             <Button
               variant="subtle"
               size="compact-s"
-              className="mr-2 px-2 py-1 bg-bg-secondary text-text-tertiary border border-border-default text-2xs"
+              className="mr-2 px-2 py-1
+                bg-bg-secondary text-text-tertiary
+                hover:bg-bg-secondary-light hover:text-text-primary
+                focus:outline-none
+                transition-colors duration-200
+                text-2xs
+                border border-border-default"
               onClick={() => executeExtensionAction('open-brief')}
             >
               BRIEF.md
@@ -262,22 +290,36 @@ Please verify that the content is still aligned with the BRIEF.md and matches th
     if (componentId !== 'tilly-brief-button') return undefined;
     const taskContext = context.getTaskContext();
     if (!taskContext) return { exists: false };
+    
     const briefPath = path.join(context.getProjectDir(), '.aider-desk', 'tasks', this.getRootTaskId(context), 'BRIEF.md');
-    return { exists: fs.existsSync(briefPath), briefPath };
+    
+    let codeAvailable = false;
+    try {
+      execSync('code --version', { stdio: 'ignore' });
+      codeAvailable = true;
+    } catch {
+      // codeAvailable is false
+    }
+
+    return { exists: fs.existsSync(briefPath) && codeAvailable, briefPath };
   }
 
   async executeUIExtensionAction(componentId: string, action: string, _args: unknown[], context: ExtensionContext): Promise<unknown> {
     if (componentId !== 'tilly-brief-button' || action !== 'open-brief') return undefined;
+    
     const briefPath = path.join(context.getProjectDir(), '.aider-desk', 'tasks', this.getRootTaskId(context), 'BRIEF.md');
+    
     if (fs.existsSync(briefPath)) {
-      try {
-        execSync(`code "${briefPath}"`);
-        return { success: true };
-      } catch {
-        return { success: false, error: 'Failed to open BRIEF.md' };
-      }
+      exec(`code "${briefPath}"`, error => {
+        if (error) {
+          context.log(`[Tilly] Failed to open VS Code: ${error.message}`, 'error');
+        } else {
+          context.log(`[Tilly] Opened BRIEF.md in VS Code: ${briefPath}`, 'info');
+        }
+      });
+      return { success: true, filePath: briefPath };
     }
-    return { success: false };
+    return { success: false, error: 'BRIEF.md does not exist' };
   }
 
   private getRootTaskId(ctx: ExtensionContext): string {
