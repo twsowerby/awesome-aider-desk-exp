@@ -898,15 +898,27 @@ Be honest and concise. If you're off track, course-correct now.
 
       // Find a profile whose provider and model match the commit fields.
       const profiles = ctx.getProjectContext().getAgentProfiles();
-      const commitProfile = profiles.find(
+      let commitProfile = profiles.find(
         (p: AgentProfile) => p.provider === commitProvider && p.model === commitModel
       );
+
       if (!commitProfile) {
         ctx.log(
-          `[Conductor] No agent profile found matching commitProvider "${commitProvider}" and commitModel "${commitModel}", using fallback`,
+          `[Conductor] No exact agent profile found matching commitProvider "${commitProvider}" and commitModel "${commitModel}", trying fallbacks`,
           'warn'
         );
-        return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
+        // Fallback 1: Current agent's own profile
+        commitProfile = profiles.find((p: AgentProfile) => p.id === agentId);
+
+        // Fallback 2: Any available profile
+        if (!commitProfile && profiles.length > 0) {
+          commitProfile = profiles[0];
+        }
+
+        if (!commitProfile) {
+          ctx.log('[Conductor] No agent profiles available for commit message generation, using fallback', 'warn');
+          return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
+        }
       }
 
       // Note: API reference docs incorrectly show generateText(modelId: string, ...),
@@ -925,7 +937,23 @@ Be honest and concise. If you're off track, course-correct now.
 
   private fallbackCommitMessage(sanitizedAgentName: string, taskDescription: string): string {
     const shortDesc = taskDescription.slice(0, 80).split('\n')[0].trim() || 'code changes';
-    return git.generateFallbackMessage(sanitizedAgentName, shortDesc);
+    
+    // Heuristic for commit type
+    let type = 'chore';
+    const lowerDesc = taskDescription.toLowerCase();
+    if (lowerDesc.includes('fix') || lowerDesc.includes('bug')) {
+      type = 'fix';
+    } else if (lowerDesc.includes('add') || lowerDesc.includes('feature') || lowerDesc.includes('new')) {
+      type = 'feat';
+    } else if (lowerDesc.includes('doc')) {
+      type = 'docs';
+    } else if (lowerDesc.includes('refactor')) {
+      type = 'refactor';
+    } else if (lowerDesc.includes('test')) {
+      type = 'test';
+    }
+
+    return git.generateFallbackMessage(sanitizedAgentName, shortDesc, type);
   }
 
   /**
