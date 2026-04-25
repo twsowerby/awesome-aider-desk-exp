@@ -1,4 +1,4 @@
-import { AgentPromptConfig } from './types';
+import { AgentPromptConfig } from './inject';
 
 export const AGENT_CONFIGS: Record<string, AgentPromptConfig> = {
   tilly: {
@@ -43,11 +43,6 @@ export const AGENT_CONFIGS: Record<string, AgentPromptConfig> = {
         "Do not mention usage of todo tools in user-facing responses; just call the tools."
       ]
     },
-    responseStyle: [
-      { id: "conciseness", text: "Keep responses brief (ideally under 4 lines), excluding tool calls/code. Use one-word confirmations like \"Done\" after successful actions." },
-      { id: "verbosity", text: "Provide additional detail only when asked, reporting errors, or explaining complex plans/findings." }
-    ],
-    refusalPolicy: "When unable to comply, state inability clearly in 1-2 sentences and offer alternatives if possible.",
     operationalNotes: `## Available Content Specialists
 
 Use the \`{{DELEGATE_TOOL}}\` tool to delegate.

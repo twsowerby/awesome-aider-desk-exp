@@ -1,6 +1,26 @@
 import type { AgentStartedEvent, AgentProfile, ExtensionContext } from '@aiderdesk/extensions';
 import { AGENT_CONFIGS } from './agent-configs';
 
+export interface AgentPromptConfig {
+  objective: string;
+  persona: string[];
+  coreDirectives: { id: string; text: string }[];
+  workflow: string;
+  todoManagement?: {
+    utilizationGuidelines: string[];
+  };
+  responseStyle?: { id: string; text: string }[];
+  refusalPolicy?: string;
+  operationalNotes?: string;
+}
+
+const DEFAULT_RESPONSE_STYLE = [
+  { id: "conciseness", text: "Keep responses brief (ideally under 4 lines), excluding tool calls/code. Use one-word confirmations like \"Done\" after successful actions." },
+  { id: "verbosity", text: "Provide additional detail only when asked, reporting errors, or explaining complex plans/findings." }
+];
+
+const DEFAULT_REFUSAL_POLICY = "When unable to comply, state inability clearly in 1-2 sentences and offer alternatives if possible.";
+
 function resolvePlaceholders(text: string, delegateToolName: string): string {
   return text.replace(/\{\{DELEGATE_TOOL\}\}/g, delegateToolName);
 }
@@ -14,21 +34,16 @@ function buildAgentPrompt(profile: AgentProfile, delegateToolName: string = 'del
   if (!config) return '';
 
   const sections: string[] = [];
-
-  // Objective
   sections.push(`  <Objective>${escapeXml(config.objective)}</Objective>`);
 
-  // Persona
   const traits = config.persona.map(t => `    <Trait>${escapeXml(t)}</Trait>`).join('\n');
   sections.push(`  <Persona>\n${traits}\n  </Persona>`);
 
-  // Core Directives
   const directives = config.coreDirectives
     .map(d => `    <Directive id="${d.id}">${escapeXml(d.text)}</Directive>`)
     .join('\n');
   sections.push(`  <CoreDirectives>\n${directives}\n  </CoreDirectives>`);
 
-  // TodoManagement
   if (config.todoManagement) {
     const guidelines = config.todoManagement.utilizationGuidelines
       .map(g => `      <Guideline>${escapeXml(g)}</Guideline>`)
@@ -48,42 +63,27 @@ ${guidelines}
   </TodoManagement>`);
   }
 
-  // Workflow
-  sections.push(config.workflow);
+  sections.push(config.workflow.startsWith('<Workflow>') ? config.workflow : `<Workflow>\n  <Step number="1" title="Execute">\n    <Instruction>${escapeXml(config.workflow)}</Instruction>\n  </Step>\n</Workflow>`);
 
-  // Response Style
-  const styles = config.responseStyle
+  const styles = (config.responseStyle || DEFAULT_RESPONSE_STYLE)
     .map(s => `    <Rule id="${s.id}">${escapeXml(s.text)}</Rule>`)
     .join('\n');
   sections.push(`  <ResponseStyle>\n${styles}\n  </ResponseStyle>`);
 
-  // Refusal Policy
-  if (config.refusalPolicy) {
-    sections.push(`  <RefusalPolicy>\n    <Rule>${escapeXml(config.refusalPolicy)}</Rule>\n  </RefusalPolicy>`);
+  sections.push(`  <RefusalPolicy>\n    <Rule>${escapeXml(config.refusalPolicy || DEFAULT_REFUSAL_POLICY)}</Rule>\n  </RefusalPolicy>`);
+
+  if (config.operationalNotes) {
+    const escapedNotes = config.operationalNotes.replace(/\]\]>/g, ']]]]><![CDATA[>');
+    sections.push(`  <Knowledge>\n    <CustomInstructions><![CDATA[\n${escapedNotes}\n]]></CustomInstructions>\n  </Knowledge>`);
   }
 
-  // Knowledge / CustomInstructions
-  const escapedNotes = config.operationalNotes.replace(/\]\]>/g, ']]]]><![CDATA[>');
-  sections.push(`  <Knowledge>
-    <CustomInstructions><![CDATA[
-${escapedNotes}
-]]></CustomInstructions>
-  </Knowledge>`);
-
-  const fullPrompt = sections.join('\n\n');
-  return resolvePlaceholders('\n\n' + fullPrompt, delegateToolName);
+  return resolvePlaceholders('\n\n' + sections.join('\n\n'), delegateToolName);
 }
 
 function insertBeforeClosingTag(prompt: string, content: string): string {
   const closingTag = '</AiderDeskSystemPrompt>';
   const insertIndex = prompt.lastIndexOf(closingTag);
-
-  if (insertIndex !== -1) {
-    return prompt.slice(0, insertIndex) + content + '\n' + prompt.slice(insertIndex);
-  }
-
-  // Fallback: just append
-  return prompt + content;
+  return insertIndex !== -1 ? prompt.slice(0, insertIndex) + content + '\n' + prompt.slice(insertIndex) : prompt + content;
 }
 
 export async function handleAgentStarted(
@@ -95,10 +95,7 @@ export async function handleAgentStarted(
   const agentPrompt = buildAgentPrompt(event.agentProfile, delegateToolName);
   if (!agentPrompt) return;
 
-  const basePrompt = event.systemPrompt ?? '';
-  const newPrompt = insertBeforeClosingTag(basePrompt, agentPrompt);
-
+  const newPrompt = insertBeforeClosingTag(event.systemPrompt ?? '', agentPrompt);
   context.log(`Injected custom prompt for agent: ${event.agentProfile.id}`, 'info');
-
   return { systemPrompt: newPrompt };
 }
