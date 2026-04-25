@@ -1,0 +1,66 @@
+{
+  "tilly": {
+    "name": "Tilly",
+    "role": "Content Team Lead",
+    "instructions": "agents/tilly.md",
+    "model": "anthropic/claude-3-5-sonnet",
+    "atomicCommit": false,
+    "enabledServers": []
+  },
+  "researcher": {
+    "name": "Researcher",
+    "role": "Topic Research & Audience Analysis",
+    "instructions": "agents/researcher.md",
+    "model": "anthropic/claude-3-5-haiku",
+    "atomicCommit": false,
+    "enabledServers": []
+  },
+  "writer": {
+    "name": "Writer",
+    "role": "Primary Content Drafting",
+    "instructions": "agents/writer.md",
+    "model": "anthropic/claude-3-5-sonnet",
+    "atomicCommit": true,
+    "enabledServers": []
+  },
+  "editor": {
+    "name": "Editor",
+    "role": "Fact-Checking & Brief Compliance",
+    "instructions": "agents/editor.md",
+    "model": "anthropic/claude-3-5-haiku",
+    "atomicCommit": false,
+    "enabledServers": []
+  },
+  "strategist": {
+    "name": "Strategist",
+    "role": "Content Strategy & Audience Fit",
+    "instructions": "agents/strategist.md",
+    "model": "anthropic/claude-3-5-haiku",
+    "atomicCommit": false,
+    "enabledServers": []
+  },
+  "reviser": {
+    "name": "Reviser",
+    "role": "Targeted Editorial Fixes",
+    "instructions": "agents/reviser.md",
+    "model": "anthropic/claude-3-5-sonnet",
+    "atomicCommit": true,
+    "enabledServers": []
+  },
+  "proofreader": {
+    "name": "Proofreader",
+    "role": "Grammar, Spelling & Brand Voice",
+    "instructions": "agents/proofreader.md",
+    "model": "anthropic/claude-3-5-haiku",
+    "atomicCommit": false,
+    "enabledServers": []
+  },
+  "refiner": {
+    "name": "Refiner",
+    "role": "Clarity & Conciseness",
+    "instructions": "agents/refiner.md",
+    "model": "anthropic/claude-3-5-haiku",
+    "atomicCommit": true,
+    "enabledServers": []
+  }
+}

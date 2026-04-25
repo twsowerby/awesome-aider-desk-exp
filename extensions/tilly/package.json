@@ -1,0 +1,21 @@
+{
+  "name": "tilly",
+  "displayName": "Tilly",
+  "version": "0.1.0",
+  "description": "Content production team orchestration extension for AiderDesk",
+  "author": "Tom Sowerby",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@aiderdesk/extensions": "latest",
+    "typescript": "^5.4.5"
+  }
+}
