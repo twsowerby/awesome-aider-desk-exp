@@ -1,11 +1,11 @@
 import type {
-  AgentFinishedEvent,
   AgentProfile,
   AgentStartedEvent,
   AgentStepFinishedEvent,
   Extension,
   ExtensionContext,
   ImportantRemindersEvent,
+  PromptTemplateEvent,
   SubagentFinishedEvent,
   ToolDefinition,
   UIComponentDefinition
@@ -15,6 +15,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
 import * as git from './git';
+import { handlePromptTemplate } from './prompts/strip';
+import { handleAgentStarted } from './prompts/inject';
 
 /** Extended profile that includes commit-specific model config. These fields are injected at runtime by loadAgents() spreading AgentDefaults, which is why they require a cast. */
 interface ConductorAgentProfile extends AgentProfile {
@@ -481,31 +483,34 @@ export default class ConductorExtension implements Extension {
     }
   }
 
-  async onAgentStarted(event: AgentStartedEvent, context: ExtensionContext): Promise<Partial<AgentStartedEvent>> {
+  async onAgentStarted(event: AgentStartedEvent, context: ExtensionContext): Promise<Partial<AgentStartedEvent> | void> {
     const agentId = event.agentProfile?.id;
-    if (!agentId) return {};
+    if (!agentId) return;
+
+    const delegateToolName = DELEGATE_TOOLS[this.config.delegationMode] ?? this.config.delegationMode;
+
+    // Delegate prompt injection to the inject module
+    const promptResult = await handleAgentStarted(event, context, { delegateToolName });
 
     const conductorAgent = this.agents.find(a => a.id === agentId);
-    if (!conductorAgent) return {};
+    const result: Partial<AgentStartedEvent> = {};
 
-    // Check if enabledServers needs to be corrected
-    const currentServers = event.agentProfile.enabledServers || [];
-    const expectedServers = conductorAgent.enabledServers || [];
-
-    if (JSON.stringify(currentServers) !== JSON.stringify(expectedServers)) {
-      context.log(
-        `[Conductor] onAgentStarted: correcting enabledServers for ${agentId} from [${currentServers}] to [${expectedServers}]`,
-        'info'
-      );
-      return {
-        agentProfile: {
-          ...event.agentProfile,
-          enabledServers: expectedServers,
-        },
-      };
+    // If prompt injection returned a result, merge it
+    if (promptResult) {
+      Object.assign(result, promptResult);
     }
 
-    return {};
+    // Correct enabledServers if needed
+    if (conductorAgent) {
+      const currentServers = event.agentProfile.enabledServers || [];
+      const expectedServers = conductorAgent.enabledServers || [];
+
+      if (JSON.stringify(currentServers) !== JSON.stringify(expectedServers)) {
+        result.agentProfile = { ...event.agentProfile, ...result.agentProfile, enabledServers: expectedServers };
+      }
+    }
+
+    return Object.keys(result).length > 0 ? result : undefined;
   }
 
   async onAgentStepFinished(
@@ -558,6 +563,10 @@ export default class ConductorExtension implements Extension {
       }
     }
     return updatedProfile;
+  }
+
+  async onPromptTemplate(event: PromptTemplateEvent, context: ExtensionContext): Promise<Partial<PromptTemplateEvent> | void> {
+    return handlePromptTemplate(event, context);
   }
 
   private async persistAgentOverride(context: ExtensionContext, agentId: string, updatedProfile: AgentProfile): Promise<void> {
@@ -628,8 +637,25 @@ export default class ConductorExtension implements Extension {
           reminders = this.config.reminders.subagent;
         }
 
-        if (reminders.length > 0) {
-          const customReminders = `\n<ThisIsImportant>\n${reminders.map((r: string) => `<Reminder>\n${r}\n</Reminder>`).join('\n')}\n</ThisIsImportant>`;
+        // Filter out reminders that are already covered by coreDirectives in AGENT_CONFIGS
+        // - "NEVER edit files directly" -> covered by conductor.objective
+        // - "Always update SPEC.md" -> covered by conductor.coreDirectives[id: spec-first]
+        // - "Wait for explicit user approval" -> covered by conductor.coreDirectives[id: wait-for-approval]
+        // - "Post-Implementation Pipeline is mandatory" -> covered by conductor.coreDirectives[id: post-implementation-pipeline]
+        const redundantPatterns = [
+          /NEVER edit files directly/i,
+          /Always update SPEC\.md/i,
+          /Wait for explicit user approval/i,
+          /Post-Implementation Pipeline/i
+        ];
+
+        let filteredReminders = reminders;
+        if (event.profile.id === 'conductor') {
+          filteredReminders = reminders.filter(r => !redundantPatterns.some(p => p.test(r)));
+        }
+
+        if (filteredReminders.length > 0) {
+          const customReminders = `\n<ThisIsImportant>\n${filteredReminders.map((r: string) => `<Reminder>\n${r}\n</Reminder>`).join('\n')}\n</ThisIsImportant>`;
 
           if (event.profile.id === 'conductor') {
             event.remindersContent = customReminders;
@@ -872,17 +898,33 @@ Be honest and concise. If you're off track, course-correct now.
 
       // Find a profile whose provider and model match the commit fields.
       const profiles = ctx.getProjectContext().getAgentProfiles();
-      const commitProfile = profiles.find(
+      let commitProfile = profiles.find(
         (p: AgentProfile) => p.provider === commitProvider && p.model === commitModel
       );
+
       if (!commitProfile) {
         ctx.log(
-          `[Conductor] No agent profile found matching commitProvider "${commitProvider}" and commitModel "${commitModel}", using fallback`,
+          `[Conductor] No exact agent profile found matching commitProvider "${commitProvider}" and commitModel "${commitModel}", trying fallbacks`,
           'warn'
         );
-        return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
+        // Fallback 1: Current agent's own profile
+        commitProfile = profiles.find((p: AgentProfile) => p.id === agentId);
+
+        // Fallback 2: Any available profile
+        if (!commitProfile && profiles.length > 0) {
+          commitProfile = profiles[0];
+        }
+
+        if (!commitProfile) {
+          ctx.log('[Conductor] No agent profiles available for commit message generation, using fallback', 'warn');
+          return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
+        }
+
+        ctx.log(`[Conductor] Using fallback profile: ${commitProfile.provider}/${commitProfile.model}`, 'info');
       }
 
+      // Note: API reference docs incorrectly show generateText(modelId: string, ...),
+      // but the actual runtime signature requires an AgentProfile object as the first argument.
       const generated = await taskContext.generateText(commitProfile, systemPrompt, userPrompt);
       if (generated?.trim()) {
         return generated.trim();
@@ -897,7 +939,22 @@ Be honest and concise. If you're off track, course-correct now.
 
   private fallbackCommitMessage(sanitizedAgentName: string, taskDescription: string): string {
     const shortDesc = taskDescription.slice(0, 80).split('\n')[0].trim() || 'code changes';
-    return git.generateFallbackMessage(sanitizedAgentName, shortDesc);
+    
+    // Heuristic for commit type
+    let type = 'chore';
+    if (/\b(fix|bug)\b/i.test(taskDescription)) {
+      type = 'fix';
+    } else if (/\b(add|feature|new)\b/i.test(taskDescription)) {
+      type = 'feat';
+    } else if (/\b(doc|docs)\b/i.test(taskDescription)) {
+      type = 'docs';
+    } else if (/\brefactor\b/i.test(taskDescription)) {
+      type = 'refactor';
+    } else if (/\btest\b/i.test(taskDescription)) {
+      type = 'test';
+    }
+
+    return git.generateFallbackMessage(sanitizedAgentName, shortDesc, type);
   }
 
   /**
