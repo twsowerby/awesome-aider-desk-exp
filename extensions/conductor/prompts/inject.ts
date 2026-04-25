@@ -24,6 +24,26 @@ function buildAgentPrompt(profile: AgentProfile, delegateToolName: string = 'del
     .join('\n');
   sections.push(`  <CoreDirectives>\n${directives}\n  </CoreDirectives>`);
 
+  // TodoManagement
+  if (config.todoManagement) {
+    const guidelines = config.todoManagement.utilizationGuidelines
+      .map(g => `      <Guideline>${g}</Guideline>`)
+      .join('\n');
+
+    sections.push(`  <TodoManagement enabled="true" group="todo">
+    <Rule id="resume-or-reset">On each new user prompt, first check for an in-progress task list using todo---get_items; resume if related, otherwise clear with todo---clear_items.</Rule>
+    <Operations>
+      <Operation id="getItems" tool="get_items" />
+      <Operation id="clear" tool="clear_items" />
+      <Operation id="set" tool="set_items" />
+      <Operation id="update" tool="update_item_completion" />
+    </Operations>
+    <Utilization>
+${guidelines}
+    </Utilization>
+  </TodoManagement>`);
+  }
+
   // Workflow
   sections.push(config.workflow);
 

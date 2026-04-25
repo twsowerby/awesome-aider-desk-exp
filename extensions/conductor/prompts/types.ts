@@ -3,6 +3,9 @@ export interface AgentPromptConfig {
   persona: string[];
   coreDirectives: { id: string; text: string }[];
   workflow: string;
+  todoManagement?: {
+    utilizationGuidelines: string[];
+  };
   responseStyle: { id: string; text: string }[];
   refusalPolicy?: string;
   operationalNotes: string;

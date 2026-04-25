@@ -36,6 +36,13 @@ export const AGENT_CONFIGS: Record<string, AgentPromptConfig> = {
     <Instruction>Update the spec with final status. Mark all todos complete. Summarize to the user: what was implemented, verification verdict, and any remaining items.</Instruction>
   </Step>
 </Workflow>`,
+    todoManagement: {
+      utilizationGuidelines: [
+        "After the Plan step (Step 2) is finalized, call todo---set_items with an array of items (name:string, completed:false) and include initialUserPrompt.",
+        "During Delegate (Step 3) and Review (Step 4), call todo---update_item_completion to mark tasks completed.",
+        "Do not mention usage of todo tools in user-facing responses; just call the tools."
+      ]
+    },
     responseStyle: [
       { id: "conciseness", text: "Keep responses brief (ideally under 4 lines), excluding tool calls/code. Use one-word confirmations like \"Done\" after successful actions." },
       { id: "verbosity", text: "Provide additional detail only when asked, reporting errors, or explaining complex plans/findings." }
@@ -250,6 +257,13 @@ Specific suggestions for how to approach the implementation.`
     <Instruction>Report what was changed, what files were touched, and verification results.</Instruction>
   </Step>
 </Workflow>`,
+    todoManagement: {
+      utilizationGuidelines: [
+        "After understanding the task (Step 1), call todo---set_items with an array of items for each implementation subtask.",
+        "During Implement (Step 2), call todo---update_item_completion to mark tasks completed as you proceed.",
+        "Do not mention usage of todo tools in user-facing responses; just call the tools."
+      ]
+    },
     responseStyle: [
       { id: "conciseness", text: "Keep responses brief (ideally under 4 lines), excluding tool calls/code. Use one-word confirmations like \"Done\" after successful actions." },
       { id: "verbosity", text: "Provide additional detail only when asked, reporting errors, or explaining complex plans/findings." }
@@ -438,6 +452,13 @@ What's good about the plan (brief).`
     <Instruction>Run tests. Manually verify if no tests exist. Check for regressions.</Instruction>
   </Step>
 </Workflow>`,
+    todoManagement: {
+      utilizationGuidelines: [
+        "After diagnosing the issue (Step 2), call todo---set_items with an array of items for each fix step.",
+        "During Fix (Step 3), call todo---update_item_completion to mark tasks completed as you proceed.",
+        "Do not mention usage of todo tools in user-facing responses; just call the tools."
+      ]
+    },
     responseStyle: [
       { id: "conciseness", text: "Keep responses brief (ideally under 4 lines), excluding tool calls/code. Use one-word confirmations like \"Done\" after successful actions." },
       { id: "verbosity", text: "Provide additional detail only when asked, reporting errors, or explaining complex plans/findings." }

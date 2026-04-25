@@ -6,6 +6,7 @@ const BEHAVIORAL_SECTIONS = [
   'Objective',
   'Persona', 
   'CoreDirectives',
+  'TodoManagement',
   'ResponseStyle',
   'RefusalPolicy',
   'CustomInstructions',
@@ -54,6 +55,12 @@ export async function handlePromptTemplate(
 
     // Remove the rendered workflow block
     prompt = prompt.replace(/\s*<Workflow>[\s\S]*?<\/Workflow>\s*/g, '\n');
+
+    // Strip <Rules></Rules> if it contains only whitespace
+    prompt = prompt.replace(/\s*<Rules>\s*<\/Rules>\s*/g, '\n');
+
+    // Strip <Knowledge></Knowledge> if it contains only whitespace
+    prompt = prompt.replace(/\s*<Knowledge>\s*<\/Knowledge>\s*/g, '\n');
 
     // Clean up excessive blank lines
     prompt = prompt.replace(/\n{3,}/g, '\n\n');
