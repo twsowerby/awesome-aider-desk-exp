@@ -8,7 +8,6 @@ const BEHAVIORAL_SECTIONS = [
   'TodoManagement',
   'ResponseStyle',
   'RefusalPolicy',
-  'CustomInstructions',
   'Workflow',
 ];
 

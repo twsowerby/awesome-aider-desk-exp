@@ -74,7 +74,7 @@ function deepMerge<T>(target: T, source: any): T {
 export default class TillyExtension implements Extension {
   static metadata = {
     name: 'Tilly',
-    version: '0.2.1',
+    version: '0.1.0',
     description: 'Content production team orchestration extension for AiderDesk',
     author: 'Tom Sowerby',
     capabilities: ['agents', 'tools', 'ui']
@@ -170,7 +170,6 @@ export default class TillyExtension implements Extension {
     const result = await handleAgentStarted(event, context);
     if (tillyAgent) {
       const mergedProfile = { ...event.agentProfile, ...result?.agentProfile };
-      mergedProfile.customInstructions = (tillyAgent.customInstructions || '') + '\n\n' + (mergedProfile.customInstructions || '');
       mergedProfile.enabledServers = tillyAgent.enabledServers || [];
       return { ...result, agentProfile: mergedProfile };
     }
@@ -208,10 +207,14 @@ export default class TillyExtension implements Extension {
     const tillyAgent = this.agents.find(a => a.id === event.subagentProfile?.id) as TillyAgentProfile;
     if (tillyAgent?.atomicCommit) {
       const dir = context.getProjectDir();
-      if (git.isGitRepo(dir) && git.getChangedFiles(dir).length > 0) {
-        git.stageFiles(dir);
-        git.commit(dir, `feat(${tillyAgent.id}): completed ${event.subagentProfile?.name}`);
-        context.log(`[Tilly] Atomic commit: ${tillyAgent.id}`, 'info');
+      try {
+        if (git.isGitRepo(dir) && git.getChangedFiles(dir).length > 0) {
+          git.stageFiles(dir);
+          git.commit(dir, `feat(${tillyAgent.id}): completed ${event.subagentProfile?.name}`);
+          context.log(`[Tilly] Atomic commit: ${tillyAgent.id}`, 'info');
+        }
+      } catch (e: any) {
+        context.log(`[Tilly] Atomic commit failed: ${e.message}`, 'error');
       }
     }
   }
@@ -260,13 +263,14 @@ export default class TillyExtension implements Extension {
   }
 
   getTools(_context: ExtensionContext, _mode: string, agentProfile: AgentProfile): ToolDefinition[] {
+    const self = this;
     const tools: ToolDefinition[] = [
       {
         name: 'update-brief',
         description: 'Updates BRIEF.md for the task.',
         inputSchema: z.object({ content: z.string() }),
         async execute(input, _signal, ctx) {
-          const briefDir = path.join(ctx.getProjectDir(), '.aider-desk', 'tasks', (ctx.extension as TillyExtension).getRootTaskId(ctx));
+          const briefDir = path.join(ctx.getProjectDir(), '.aider-desk', 'tasks', self.getRootTaskId(ctx));
           fs.mkdirSync(briefDir, { recursive: true });
           fs.writeFileSync(path.join(briefDir, 'BRIEF.md'), (input as any).content, 'utf-8');
           ctx.triggerUIDataRefresh('tilly-brief-button');
@@ -279,7 +283,7 @@ export default class TillyExtension implements Extension {
         inputSchema: z.object({}),
         async execute(_input, _signal, ctx) {
           try {
-            const content = fs.readFileSync(path.join(ctx.getProjectDir(), '.aider-desk', 'tasks', (ctx.extension as TillyExtension).getRootTaskId(ctx), 'BRIEF.md'), 'utf-8');
+            const content = fs.readFileSync(path.join(ctx.getProjectDir(), '.aider-desk', 'tasks', self.getRootTaskId(ctx), 'BRIEF.md'), 'utf-8');
             return { content: [{ type: 'text', text: content }] };
           } catch { return { content: [{ type: 'text', text: '' }] }; }
         }
@@ -297,11 +301,11 @@ export default class TillyExtension implements Extension {
         }),
         async execute(input, _signal, ctx) {
           const { agentId, taskName, taskDescription } = input as any;
-          const profile = (ctx.extension as TillyExtension).getAgents(ctx).find(a => a.id === agentId);
+          const profile = self.getAgents(ctx).find(a => a.id === agentId);
           if (!profile) return { isError: true, content: [{ type: 'text', text: 'Agent not found' }] };
           const taskContext = ctx.getTaskContext();
           if (!taskContext) return { isError: true, content: [{ type: 'text', text: 'No task context' }] };
-          const newTask = await ctx.getProjectContext().createTask({ parentId: taskContext.data.id, name: taskName, provider: profile.provider, model: profile.model, agentProfileId: profile.id });
+          const newTask = await ctx.getProjectContext().createTask({ parentId: taskContext.data.id, name: taskName, provider: profile.provider, model: profile.model });
           const subtask = ctx.getProjectContext().getTask(newTask.id);
           if (subtask) {
             await subtask.runPrompt(taskDescription, 'agent');
