@@ -1,7 +1,3 @@
-Now I have all the verified details. Let me write the documentation.
-
----
-
 # Overriding System Prompts in AiderDesk Extensions
 
 ## A Developer Guide for Multi-Agent Orchestrators
@@ -327,6 +323,78 @@ async onPromptTemplate(
 ```
 
 **However**, the regex-stripping approach is simpler and doesn't require bundling Handlebars in your extension. The structural sections are already correctly rendered by the default template — you just need to remove the behavioral ones.
+
+---
+
+## Accessing the Agent ID in `onPromptTemplate`
+
+The `PromptTemplateEvent` does not contain the agent profile directly. However, you can access it through the `ExtensionContext` — the task is always available when rendering `system-prompt` or `workflow`.
+
+```typescript
+async onPromptTemplate(
+  event: PromptTemplateEvent,
+  context: ExtensionContext
+): Promise<void | Partial<PromptTemplateEvent>> {
+  const taskContext = context.getTaskContext();  // TaskContext | null (sync)
+  if (taskContext) {
+    const agentProfile = await taskContext.getTaskAgentProfile();  // async — returns AgentProfile | null
+    const agentId = agentProfile?.id;  // e.g., "conductor", "investigator", "implementor"
+  }
+}
+```
+
+### Why this works
+
+When `PromptsManager.getSystemPrompt()` is called, it passes the `Task` object through to `render()`, which passes it to `dispatchEvent()`. The `ExtensionManager` then creates an `ExtensionContextImpl` with that task, so `getTaskContext()` will return a valid `TaskContext` (not null) for both the `workflow` and `system-prompt` template renders.
+
+### When to use this
+
+This is useful if you want to do **per-agent stripping** in `onPromptTemplate` — for example, stripping different sections for different agents, or only stripping for specific agents while leaving the default prompt intact for others:
+
+```typescript
+async onPromptTemplate(
+  event: PromptTemplateEvent,
+  context: ExtensionContext
+): Promise<void | Partial<PromptTemplateEvent>> {
+  if (event.name === 'system-prompt') {
+    const taskContext = context.getTaskContext();
+    const agentProfile = taskContext ? await taskContext.getTaskAgentProfile() : null;
+    const agentId = agentProfile?.id;
+
+    // Only strip for agents in our orchestrator; leave default agents untouched
+    if (agentId && AGENT_CONFIGS[agentId]) {
+      let prompt = event.prompt;
+      for (const section of BEHAVIORAL_SECTIONS) {
+        prompt = stripXmlSection(prompt, section);
+      }
+      return { prompt };
+    }
+  }
+
+  if (event.name === 'workflow') {
+    const taskContext = context.getTaskContext();
+    const agentProfile = taskContext ? await taskContext.getTaskAgentProfile() : null;
+    const agentId = agentProfile?.id;
+
+    if (agentId && AGENT_CONFIGS[agentId]) {
+      return { prompt: '' };
+    }
+  }
+}
+```
+
+### API reference
+
+| Method | Returns | Async? | Notes |
+|--------|---------|--------|-------|
+| `context.getTaskContext()` | `TaskContext \| null` | No | Returns `null` if no task is active (should not happen for `system-prompt` renders) |
+| `taskContext.getTaskAgentProfile()` | `Promise<AgentProfile \| null>` | **Yes** | Must be `await`ed. Returns `null` if no profile is assigned |
+| `agentProfile.id` | `string` | No | The agent profile ID (e.g., `"conductor"`, `"pirate"`) |
+
+### ⚠️ Important
+
+- `getTaskAgentProfile()` is **async**. Since `onPromptTemplate` is awaited by the `ExtensionManager`, using `await` inside it is safe and will not break the dispatch chain.
+- The `TaskContext` is only available when a task is active. For template renders outside of a task context (e.g., `commit-message` rendered independently), `getTaskContext()` may return `null`. Always null-check.
 
 ---
 
