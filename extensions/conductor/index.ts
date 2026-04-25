@@ -919,6 +919,8 @@ Be honest and concise. If you're off track, course-correct now.
           ctx.log('[Conductor] No agent profiles available for commit message generation, using fallback', 'warn');
           return this.fallbackCommitMessage(sanitizedAgentName, taskDescription);
         }
+
+        ctx.log(`[Conductor] Using fallback profile: ${commitProfile.provider}/${commitProfile.model}`, 'info');
       }
 
       // Note: API reference docs incorrectly show generateText(modelId: string, ...),
@@ -940,16 +942,15 @@ Be honest and concise. If you're off track, course-correct now.
     
     // Heuristic for commit type
     let type = 'chore';
-    const lowerDesc = taskDescription.toLowerCase();
-    if (lowerDesc.includes('fix') || lowerDesc.includes('bug')) {
+    if (/\b(fix|bug)\b/i.test(taskDescription)) {
       type = 'fix';
-    } else if (lowerDesc.includes('add') || lowerDesc.includes('feature') || lowerDesc.includes('new')) {
+    } else if (/\b(add|feature|new)\b/i.test(taskDescription)) {
       type = 'feat';
-    } else if (lowerDesc.includes('doc')) {
+    } else if (/\b(doc|docs)\b/i.test(taskDescription)) {
       type = 'docs';
-    } else if (lowerDesc.includes('refactor')) {
+    } else if (/\brefactor\b/i.test(taskDescription)) {
       type = 'refactor';
-    } else if (lowerDesc.includes('test')) {
+    } else if (/\btest\b/i.test(taskDescription)) {
       type = 'test';
     }
 
