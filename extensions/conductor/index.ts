@@ -635,8 +635,22 @@ export default class ConductorExtension implements Extension {
           reminders = this.config.reminders.subagent;
         }
 
-        if (reminders.length > 0) {
-          const customReminders = `\n<ThisIsImportant>\n${reminders.map((r: string) => `<Reminder>\n${r}\n</Reminder>`).join('\n')}\n</ThisIsImportant>`;
+        // Filter out reminders that are already covered by coreDirectives in AGENT_CONFIGS
+        // - "NEVER edit files directly" -> covered by conductor.objective
+        // - "Always update SPEC.md" -> covered by conductor.coreDirectives[id: spec-first]
+        // - "Wait for explicit user approval" -> covered by conductor.coreDirectives[id: wait-for-approval]
+        // - "Post-Implementation Pipeline is mandatory" -> covered by conductor.coreDirectives[id: post-implementation-pipeline]
+        const redundantPatterns = [
+          /NEVER edit files directly/i,
+          /Always update SPEC\.md/i,
+          /Wait for explicit user approval/i,
+          /Post-Implementation Pipeline/i
+        ];
+
+        const filteredReminders = reminders.filter(r => !redundantPatterns.some(p => p.test(r)));
+
+        if (filteredReminders.length > 0) {
+          const customReminders = `\n<ThisIsImportant>\n${filteredReminders.map((r: string) => `<Reminder>\n${r}\n</Reminder>`).join('\n')}\n</ThisIsImportant>`;
 
           if (event.profile.id === 'conductor') {
             event.remindersContent = customReminders;
