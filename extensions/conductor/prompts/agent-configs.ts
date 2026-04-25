@@ -260,7 +260,7 @@ Specific suggestions for how to approach the implementation.`
     todoManagement: {
       utilizationGuidelines: [
         "After understanding the task (Step 1), call todo---set_items with an array of items for each implementation subtask.",
-        "During Implement (Step 2), call todo---update_item_completion to mark tasks completed as you proceed.",
+        "During Implement (Step 4), call todo---update_item_completion to mark tasks completed as you proceed.",
         "Do not mention usage of todo tools in user-facing responses; just call the tools."
       ]
     },

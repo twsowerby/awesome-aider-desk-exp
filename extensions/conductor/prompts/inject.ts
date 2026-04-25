@@ -5,6 +5,10 @@ function resolvePlaceholders(text: string, delegateToolName: string): string {
   return text.replace(/\{\{DELEGATE_TOOL\}\}/g, delegateToolName);
 }
 
+function escapeXml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function buildAgentPrompt(profile: AgentProfile, delegateToolName: string = 'delegate-to-agent'): string {
   const config = AGENT_CONFIGS[profile.id];
   if (!config) return '';
@@ -12,22 +16,22 @@ function buildAgentPrompt(profile: AgentProfile, delegateToolName: string = 'del
   const sections: string[] = [];
 
   // Objective
-  sections.push(`  <Objective>${config.objective}</Objective>`);
+  sections.push(`  <Objective>${escapeXml(config.objective)}</Objective>`);
 
   // Persona
-  const traits = config.persona.map(t => `    <Trait>${t}</Trait>`).join('\n');
+  const traits = config.persona.map(t => `    <Trait>${escapeXml(t)}</Trait>`).join('\n');
   sections.push(`  <Persona>\n${traits}\n  </Persona>`);
 
   // Core Directives
   const directives = config.coreDirectives
-    .map(d => `    <Directive id="${d.id}">${d.text}</Directive>`)
+    .map(d => `    <Directive id="${d.id}">${escapeXml(d.text)}</Directive>`)
     .join('\n');
   sections.push(`  <CoreDirectives>\n${directives}\n  </CoreDirectives>`);
 
   // TodoManagement
   if (config.todoManagement) {
     const guidelines = config.todoManagement.utilizationGuidelines
-      .map(g => `      <Guideline>${g}</Guideline>`)
+      .map(g => `      <Guideline>${escapeXml(g)}</Guideline>`)
       .join('\n');
 
     sections.push(`  <TodoManagement enabled="true" group="todo">
@@ -49,19 +53,20 @@ ${guidelines}
 
   // Response Style
   const styles = config.responseStyle
-    .map(s => `    <Rule id="${s.id}">${s.text}</Rule>`)
+    .map(s => `    <Rule id="${s.id}">${escapeXml(s.text)}</Rule>`)
     .join('\n');
   sections.push(`  <ResponseStyle>\n${styles}\n  </ResponseStyle>`);
 
   // Refusal Policy
   if (config.refusalPolicy) {
-    sections.push(`  <RefusalPolicy>\n    <Rule>${config.refusalPolicy}</Rule>\n  </RefusalPolicy>`);
+    sections.push(`  <RefusalPolicy>\n    <Rule>${escapeXml(config.refusalPolicy)}</Rule>\n  </RefusalPolicy>`);
   }
 
   // Knowledge / CustomInstructions
+  const escapedNotes = config.operationalNotes.replace(/\]\]>/g, ']]]]><![CDATA[>');
   sections.push(`  <Knowledge>
     <CustomInstructions><![CDATA[
-${config.operationalNotes}
+${escapedNotes}
 ]]></CustomInstructions>
   </Knowledge>`);
 
