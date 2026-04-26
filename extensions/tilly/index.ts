@@ -51,10 +51,16 @@ interface TillyConfig {
     useSkillsTools: boolean;
     useExtensionTools: boolean;
     autoApprove: boolean;
+    commitModel?: string;
+    commitProvider?: string;
   };
+  delegationMode?: string;
   editorialCheckpointInterval: number;
   contentStyleGuide?: string;
   atomicCommit?: boolean;
+  reminders?: {
+    [agentId: string]: string[];
+  };
 }
 
 function deepMerge<T>(target: T, source: any): T {
@@ -89,25 +95,30 @@ export default class TillyExtension implements Extension {
 
   async onLoad(context: ExtensionContext): Promise<void> {
     try {
-      this.baseConfig = {
-        defaults: {
-          provider: 'anthropic',
-          model: 'claude-3-5-sonnet',
-          maxIterations: 20,
-          enabledServers: [],
-          usePowerTools: true,
-          useAiderTools: true,
-          useTodoTools: true,
-          useSubagents: true,
-          useTaskTools: true,
-          useMemoryTools: true,
-          useSkillsTools: true,
-          useExtensionTools: true,
-          autoApprove: false
-        },
-        editorialCheckpointInterval: 10,
-        atomicCommit: true
-      };
+      const configPath = path.join(__dirname, 'config.json');
+      if (fs.existsSync(configPath)) {
+        this.baseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      } else {
+        this.baseConfig = {
+          defaults: {
+            provider: 'anthropic',
+            model: 'claude-3-5-sonnet',
+            maxIterations: 20,
+            enabledServers: [],
+            usePowerTools: true,
+            useAiderTools: true,
+            useTodoTools: true,
+            useSubagents: true,
+            useTaskTools: true,
+            useMemoryTools: true,
+            useSkillsTools: true,
+            useExtensionTools: true,
+            autoApprove: false
+          },
+          editorialCheckpointInterval: 10,
+          atomicCommit: true
+        };
+      }
       
       const registryPath = path.join(__dirname, 'agents', 'index.json');
       this.registry = JSON.parse(fs.readFileSync(registryPath, 'utf-8'));
@@ -184,6 +195,12 @@ export default class TillyExtension implements Extension {
     const count = this.stepCount.get(event.profile.id) || 0;
     if (count > 0 && count % this.config.editorialCheckpointInterval === 0) {
       event.remindersContent = (event.remindersContent || '') + `\n<ThisIsImportant>\n<Reminder>\n🛑 **EDITORIAL CHECKPOINT** — Step ${count}. Verify alignment with BRIEF.md.\n</Reminder>\n</ThisIsImportant>`;
+    }
+
+    const agentReminders = this.config.reminders?.[event.profile.id];
+    if (agentReminders && agentReminders.length > 0) {
+      const formattedReminders = agentReminders.map(r => `<Reminder>\n${r}\n</Reminder>`).join('\n');
+      event.remindersContent = (event.remindersContent || '') + `\n<ThisIsImportant>\n${formattedReminders}\n</ThisIsImportant>`;
     }
 
     if (this.config.contentStyleGuide) {
