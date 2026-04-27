@@ -1,0 +1,36 @@
+{
+  "defaults": {
+    "provider": "anthropic",
+    "model": "claude-3-5-sonnet",
+    "maxIterations": 20,
+    "enabledServers": [],
+    "usePowerTools": true,
+    "useAiderTools": true,
+    "useTodoTools": true,
+    "useSubagents": true,
+    "useTaskTools": true,
+    "useMemoryTools": true,
+    "useSkillsTools": false,
+    "useExtensionTools": true,
+    "autoApprove": false,
+    "commitModel": "google/gemini-3-flash-preview",
+    "commitProvider": "openrouter"
+  },
+  "delegationMode": "subtask",
+  "editorialCheckpointInterval": 5,
+  "atomicCommit": true,
+  "reminders": {
+    "tilly": [
+      "You are Tilly, the lead strategist and orchestrator of a high-performance content production team.",
+      "All content production tasks MUST be delegated to specialist subagents (Researcher, Writer, Editor, etc.).",
+      "Always update BRIEF.md with the latest strategy and requirements before delegating work.",
+      "Before starting a major content piece, present the strategy in BRIEF.md and STOP. Wait for explicit user approval.",
+      "After every draft or significant revision, you MUST run the Editorial Pipeline (Editor -> Proofread -> Analyze)."
+    ],
+    "subagent": [
+      "You are a specialist content agent. Focus strictly on your assigned role (e.g., Research, Writing, Editing).",
+      "Follow the style guide and BRIEF.md requirements precisely.",
+      "Output your results clearly for Tilly to review."
+    ]
+  }
+}
