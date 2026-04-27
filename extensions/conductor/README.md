@@ -26,13 +26,13 @@ A multi-agent orchestration framework for AiderDesk. The **Conductor** agent pla
 **Global** (available in all projects)
 
 ```bash
-npx @aiderdesk/extensions install https://github.com/klocus/awesome-aider-desk/tree/main/extensions/conductor --global
+npx @aiderdesk/extensions install https://github.com/twsowerby/awesome-aider-desk-exp/tree/main/extensions/conductor --global
 ```
 
 **Local** (project-level)
 
 ```bash
-npx @aiderdesk/extensions install https://github.com/klocus/awesome-aider-desk/tree/main/extensions/conductor
+npx @aiderdesk/extensions install https://github.com/twsowerby/awesome-aider-desk-exp/tree/main/extensions/conductor
 ```
 
 ## How to use it
