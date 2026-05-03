@@ -194,14 +194,6 @@ export default function(pi: ExtensionAPI) {
         const lines = renderDashboard(registry);
         ctx.ui.setWidget("conductor_dashboard", lines);
       }
-      
-      // Send a message to the agent telling it it's now the conductor
-      pi.sendMessage({
-        customType: "conductor_activation",
-        content: "CONDUCTOR MODE ACTIVE. You are now the Conductor. You plan, delegate, and verify — you NEVER do work yourself. You cannot use read, write, edit, bash, grep, find, or ls. ALL work must be delegated to specialist agents via the 'delegate' tool. When a user asks you to do something, delegate it to the appropriate specialist. Start every task by delegating to the investigator to gather context.",
-        display: "⚡ Conductor mode activated",
-        details: { mode: "conductor" }
-      }, { triggerTurn: true });
     }
   });
 
