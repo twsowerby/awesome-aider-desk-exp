@@ -1,5 +1,14 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { SubagentHandle } from "./subagent-process.js";
+import { renderDashboard } from "./agent-dashboard.js";
+import { registry } from "./subagent-process.js";
+
+// Global reference to the last known context to allow UI updates from background events
+let lastCtx: any = null;
+
+export function setGlobalContext(ctx: any) {
+  lastCtx = ctx;
+}
 
 export function forwardEvents(pi: ExtensionAPI, handle: SubagentHandle) {
   let buffer = "";
@@ -32,25 +41,28 @@ export function forwardEvents(pi: ExtensionAPI, handle: SubagentHandle) {
 }
 
 function processEvent(pi: ExtensionAPI, handle: SubagentHandle, event: any) {
+  let changed = false;
+
   // Update last activity for dashboard
   if (event.type === "tool_execution_start") {
     handle.lastActivity = `Calling ${event.toolName}`;
+    changed = true;
   } else if (event.type === "message_start" && event.message?.role === "assistant") {
     handle.lastActivity = "Thinking...";
+    changed = true;
   }
 
   // Capture result if report-result is called
   if (event.type === "tool_execution_start" && event.toolName === "report-result") {
     handle.result = event.args;
     handle.state = "done";
+    changed = true;
   }
 
-  // Forward to conductor session as a custom message or entry
-  // For Wave 1, we'll use a simple notification or status update
-  // In a full implementation, we'd use pi.sendMessage or similar to show in UI
-  // if (event.type === "tool_execution_start") {
-  //    pi.ui.setStatus(handle.id, `${handle.agentName}: ${event.toolName}`);
-  // }
+  // Update dashboard if anything changed
+  if (changed) {
+    triggerDashboardUpdate(pi);
+  }
 }
 
 export function resumeSubagent(pi: ExtensionAPI, handle: SubagentHandle) {
@@ -58,5 +70,13 @@ export function resumeSubagent(pi: ExtensionAPI, handle: SubagentHandle) {
   while (handle.pauseBuffer.length > 0) {
     const event = handle.pauseBuffer.shift();
     processEvent(pi, handle, event);
+  }
+  triggerDashboardUpdate(pi);
+}
+
+export function triggerDashboardUpdate(pi: ExtensionAPI) {
+  if (lastCtx && lastCtx.hasUI) {
+    const lines = renderDashboard(registry);
+    lastCtx.ui.setWidget("conductor_dashboard", lines);
   }
 }
