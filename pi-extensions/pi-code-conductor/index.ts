@@ -8,12 +8,21 @@ import { renderDashboard } from "./agent-dashboard.js";
 import { pauseAgent, resumeAgent, steerAgent, abortAgent } from "./pause-steer.js";
 import { setGlobalContext, triggerDashboardUpdate, clearGlobalContext } from "./event-bridge.js";
 
+import { registerSpecTools } from "./spec-manager.js";
+import { registerTodoTools } from "./todo-manager.js";
+import { registerCommitTool } from "./commit-tool.js";
+import { registerChainTools } from "./chain.js";
+
 export default function(pi: ExtensionAPI) {
   // 1. Initialize Security Gate
   createSecurityGate(pi);
 
   // 2. Register Tools
   registerResultTools(pi);
+  registerSpecTools(pi);
+  registerTodoTools(pi);
+  registerCommitTool(pi);
+  registerChainTools(pi);
 
   pi.registerTool({
     name: "delegate",

@@ -1,30 +1,45 @@
 import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { registry } from "./subagent-process.js";
-
-export const ReportResultSchema = Type.Object({
-  completed: Type.Boolean(),
-  summary: Type.String(),
-  files_changed: Type.Optional(Type.Array(Type.String())),
-  issues: Type.Optional(Type.Array(Type.String())),
-  artifacts: Type.Optional(Type.Array(Type.String())),
-});
+import { OUTPUT_SCHEMAS } from "./output-schemas.js";
+import { Value } from "@sinclair/typebox/value";
 
 export function registerResultTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "report-result",
     label: "Report Result",
     description: "Report your final result back to the conductor. Call this when your task is complete.",
-    parameters: ReportResultSchema,
+    parameters: Type.Object({
+      output_schema: Type.Optional(Type.String({ description: "The name of the schema to validate against" })),
+      data: Type.Any({ description: "The structured result data" })
+    }),
     execute: async (toolCallId, args, signal, onUpdate, ctx) => {
-      // In a real subagent process, this tool is called by the subagent.
-      // We need to identify which subagent is calling it.
-      // Since subagents run in their own process, they would call this tool
-      // and we'd see it in the event stream.
+      let validationWarning: string | undefined;
       
-      // For Wave 1, we just return a success message.
-      // The actual capture happens in event-bridge.ts by watching tool_execution_start for 'report-result'.
-      return "Result recorded. You may now exit.";
+      if (args.output_schema) {
+        const schema = OUTPUT_SCHEMAS[args.output_schema];
+        if (schema) {
+          const isValid = Value.Check(schema, args.data);
+          if (!isValid) {
+            const errors = [...Value.Errors(schema, args.data)];
+            validationWarning = `Validation failed for ${args.output_schema}: ${errors.map(e => e.message).join(", ")}`;
+          }
+        } else {
+          validationWarning = `Unknown output_schema: ${args.output_schema}`;
+        }
+      }
+
+      // The actual capture happens in event-bridge.ts or by the subagent process manager
+      // that monitors tool calls. Here we just provide feedback to the agent.
+      
+      if (validationWarning) {
+        return {
+          isError: false,
+          content: [{ type: "text", text: `Result received with warnings: ${validationWarning}` }]
+        };
+      }
+
+      return "Result recorded successfully. You may now exit.";
     }
   });
 }
