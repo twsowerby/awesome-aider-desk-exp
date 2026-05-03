@@ -55,6 +55,12 @@ function processEvent(pi: ExtensionAPI, handle: SubagentHandle, event: any) {
   } else if (event.type === "message_start" && event.message?.role === "assistant") {
     handle.lastActivity = "Thinking...";
     changed = true;
+  } else if (event.type === "message_end") {
+    handle.lastActivity = "Responding...";
+    if (event.message?.role === "assistant") {
+      handle.messages.push(event.message);
+    }
+    changed = true;
   }
 
   // Capture result if report-result is called

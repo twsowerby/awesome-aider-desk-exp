@@ -31,31 +31,12 @@ export async function resumeAgent(id: string, pi: ExtensionAPI, ctx: ExtensionCo
 
 export async function steerAgent(id: string, message: string, ctx: ExtensionContext): Promise<string> {
   const handle = registry.get(id);
-  if (!handle || !handle.process || !handle.process.stdin) {
-    return `Agent ${id} not found or not running.`;
-  }
-
-  // Format as a JSON message for Pi in --mode json
-  // Pi expects a JSON object on stdin representing the next turn
-  const msg = {
-    role: "user",
-    content: [{ type: "text", text: message }]
-  };
-
-  if (!handle.process.stdin.writable) {
-    return `Agent ${id} stdin is not writable.`;
-  }
-
-  try {
-    handle.process.stdin.write(JSON.stringify(msg) + "\n");
-  } catch (err: any) {
-    return `Failed to write to agent ${id} stdin: ${err.message}`;
-  }
+  if (!handle) return `Agent ${id} not found`;
+  if (handle.state !== "running" && handle.state !== "paused") return `Agent ${id} is not running (state: ${handle.state})`;
   
-  if (ctx.hasUI) {
-    ctx.ui.notify(`Sent message to agent ${handle.agentName} (${id}).`);
-  }
-  return `Message sent to agent ${id}.`;
+  // Since stdin is ignored for reliability, we suggest re-delegation.
+  // The conductor/user should abort and re-delegate.
+  return `Steering not available for running subagents (stdin is closed for reliability). Use abort-agent to stop the current agent, then delegate again with additional context: "${message}"`;
 }
 
 export async function abortAgent(id: string, ctx: ExtensionContext): Promise<string> {

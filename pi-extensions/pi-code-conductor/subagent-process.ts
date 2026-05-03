@@ -26,6 +26,7 @@ export interface SubagentHandle {
   isPaused: boolean;
   tempFiles: string[];
   eventLog: any[];
+  messages: any[];
 }
 
 export const registry = new Map<string, SubagentHandle>();
@@ -101,6 +102,22 @@ export default function(pi) {
   return extPath;
 }
 
+function getPiInvocation(args: string[]): { command: string; args: string[] } {
+  const currentScript = process.argv[1];
+  // Check if current script exists and is not a virtual bun path
+  if (currentScript && !currentScript.startsWith("/$bunfs/root/") && fs.existsSync(currentScript)) {
+    return { command: process.execPath, args: [currentScript, ...args] };
+  }
+
+  const execName = path.basename(process.execPath).toLowerCase();
+  const isGenericRuntime = /^(node|bun)(\.exe)?$/.test(execName);
+  if (!isGenericRuntime) {
+    return { command: process.execPath, args };
+  }
+
+  return { command: "pi", args };
+}
+
 export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string, cwd: string): SubagentHandle {
   const id = crypto.randomUUID();
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `pi-conductor-${id}-`));
@@ -142,9 +159,10 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
 
   let proc: ChildProcess;
   try {
-    proc = spawn("pi", args, {
+    const invocation = getPiInvocation(args);
+    proc = spawn(invocation.command, invocation.args, {
       cwd,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
       env,
       shell: false
     });
@@ -158,7 +176,8 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
       result: errorResult,
       resultPromise: Promise.resolve(errorResult),
       tempFiles: [tmpDir],
-      eventLog: []
+      eventLog: [],
+      messages: []
     };
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     return errorHandle;
@@ -179,7 +198,8 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
     pauseBuffer: [],
     isPaused: false,
     tempFiles: [tmpDir],
-    eventLog: []
+    eventLog: [],
+    messages: []
   };
 
   registry.set(id, handle);
@@ -197,6 +217,23 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
     if (handle.state === "running") {
       handle.state = code === 0 ? "done" : "failed";
     }
+    
+    // If report-result wasn't called, extract from accumulated messages
+    if (!handle.result) {
+      const lastAssistantMsg = handle.messages?.filter(m => m.role === "assistant").pop();
+      if (lastAssistantMsg) {
+        const textParts = lastAssistantMsg.content
+          .filter((p: any) => p.type === "text")
+          .map((p: any) => p.text)
+          .join("\n");
+        
+        handle.result = {
+          content: [{ type: "text", text: textParts || "Subagent completed without text output." }],
+          _validationWarning: "No report-result call — extracted from final message"
+        };
+      }
+    }
+
     let result: AgentToolResult;
     if (handle.result?.content) {
       result = handle.result;

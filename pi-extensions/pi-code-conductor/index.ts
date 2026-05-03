@@ -134,10 +134,13 @@ export default function(pi: ExtensionAPI) {
   pi.registerTool({
     name: "steer-agent",
     label: "Steer Agent",
-    description: "Inject a message into a running subagent's session.",
+    description: "Abort and re-delegate a subagent with new context.",
     parameters: Type.Object({ id: Type.String(), message: Type.String() }),
     execute: async (toolCallId, args, signal, onUpdate, ctx) => {
       setGlobalContext(ctx);
+      const handle = registry.get(args.id);
+      if (!handle) return { content: [{ type: "text", text: `Agent ${args.id} not found` }] };
+      
       const result = await steerAgent(args.id, args.message, ctx);
       triggerDashboardUpdate(pi);
       return { content: [{ type: "text", text: result }] };
@@ -193,17 +196,31 @@ export default function(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("steer", {
-    description: "Send a steering message to a running subagent",
+    description: "Abort current subagent and re-delegate with steering message",
     handler: async (args, ctx) => {
       setGlobalContext(ctx);
       const id = await selectAgent(ctx);
       if (!id) return;
       
+      const handle = registry.get(id);
+      if (!handle) return;
+
       const message = args.trim() || await ctx.ui.input("Enter steering message:");
-      if (message) {
-        await steerAgent(id, message, ctx);
-        triggerDashboardUpdate(pi);
-      }
+      if (!message) return;
+
+      // Abort the running agent
+      await abortAgent(id, ctx);
+      if (ctx.hasUI) ctx.ui.notify(`Aborted ${handle.agentName}. Re-delegating with: ${message}`, "info");
+      
+      // Tell the conductor to re-delegate with the steer message
+      pi.sendMessage({
+        customType: "conductor_steer",
+        content: `The user wants to steer the ${handle.agentName} agent with this message: "${message}". Please re-delegate to ${handle.agentName} with the original task plus this additional context.`,
+        display: `Steering: ${message}`,
+        details: { agentName: handle.agentName, steerMessage: message }
+      }, { triggerTurn: true });
+      
+      triggerDashboardUpdate(pi);
     }
   });
 
