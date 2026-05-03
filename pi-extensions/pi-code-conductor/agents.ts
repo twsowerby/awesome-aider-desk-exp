@@ -34,32 +34,66 @@ function parseFrontmatter(content: string): { frontmatter: any, body: string } {
   
   const yamlStr = match[1];
   const body = match[2];
-  const frontmatter: any = {};
   
+  // Basic YAML parser that handles one level of nesting
+  const frontmatter: any = {};
   const lines = yamlStr.split("\n");
+  
   let currentKey: string | null = null;
+  let currentObject: any = null;
   let currentList: any[] | null = null;
 
   for (const line of lines) {
-    const keyMatch = line.match(/^(\w+):\s*(.*)$/);
-    if (keyMatch) {
-      const key = keyMatch[1];
-      const value = keyMatch[2].trim();
-      if (value.startsWith("[") && value.endsWith("]")) {
-         frontmatter[key] = value.slice(1, -1).split(",").map(s => s.trim().replace(/^["']|["']$/g, ""));
-      } else if (value === "" || value === ">") {
-        currentKey = key;
-        currentList = null;
+    if (!line.trim()) continue;
+
+    // Check for top-level key: value or key:
+    const topLevelMatch = line.match(/^(\w+):\s*(.*)$/);
+    if (topLevelMatch) {
+      const key = topLevelMatch[1];
+      const value = topLevelMatch[2].trim();
+      
+      currentKey = key;
+      currentObject = null;
+      currentList = null;
+
+      if (value === "" || value === ">") {
+        // Nested structure follows
+      } else if (value.startsWith("[") && value.endsWith("]")) {
+        frontmatter[key] = value.slice(1, -1).split(",").map(s => s.trim().replace(/^["']|["']$/g, ""));
       } else {
         frontmatter[key] = value.replace(/^["']|["']$/g, "");
       }
       continue;
     }
 
+    // Check for list item: - value
     const listMatch = line.match(/^\s*-\s*(.*)$/);
     if (listMatch && currentKey) {
+      const value = listMatch[1].trim().replace(/^["']|["']$/g, "");
+      
       if (!frontmatter[currentKey]) frontmatter[currentKey] = [];
-      frontmatter[currentKey].push(listMatch[1].trim().replace(/^["']|["']$/g, ""));
+      
+      if (value.includes(":")) {
+        // List of objects
+        const [k, v] = value.split(":").map(s => s.trim().replace(/^["']|["']$/g, ""));
+        const obj = { [k]: v };
+        frontmatter[currentKey].push(obj);
+      } else {
+        frontmatter[currentKey].push(value);
+      }
+      continue;
+    }
+
+    // Check for indented key: value (nested object)
+    const nestedMatch = line.match(/^\s+(\w+):\s*(.*)$/);
+    if (nestedMatch && currentKey) {
+      const key = nestedMatch[1];
+      const value = nestedMatch[2].trim().replace(/^["']|["']$/g, "");
+      
+      if (!frontmatter[currentKey] || typeof frontmatter[currentKey] !== 'object') {
+        frontmatter[currentKey] = {};
+      }
+      frontmatter[currentKey][key] = value;
       continue;
     }
   }

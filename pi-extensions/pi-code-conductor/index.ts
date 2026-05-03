@@ -30,18 +30,37 @@ export default function(pi: ExtensionAPI) {
       const handle = spawnSubagent(pi, agent, args.task, args.cwd || ctx.cwd);
       
       return new Promise((resolve) => {
-        handle.process.on("exit", (code) => {
-          const result = handle.result || { summary: "Subagent finished without reporting structured result." };
+        let resolved = false;
+
+        const complete = (result: any) => {
+          if (resolved) return;
+          resolved = true;
           resolve({
             content: [{ type: "text", text: typeof result === 'string' ? result : JSON.stringify(result, null, 2) }],
             details: result
           });
+        };
+
+        if (!handle.process) {
+          // Handle spawn failure (synchronous error in spawnSubagent)
+          complete(handle.result || { error: "Failed to spawn subagent." });
+          return;
+        }
+
+        handle.process.on("error", (err) => {
+          complete({ error: `Subagent process error: ${err.message}` });
+        });
+
+        handle.process.on("exit", (code) => {
+          const result = handle.result || { summary: "Subagent finished without reporting structured result." };
+          complete(result);
         });
 
         if (signal) {
           signal.onabort = () => {
+            handle.state = "aborted";
             handle.process.kill("SIGTERM");
-            resolve({ content: [{ type: "text", text: "Delegation aborted." }] });
+            complete({ summary: "Delegation aborted by user." });
           };
         }
       });
@@ -70,7 +89,7 @@ export default function(pi: ExtensionAPI) {
     parameters: Type.Object({ id: Type.String(), message: Type.String() }),
     execute: async (toolCallId, args) => {
       const handle = registry.get(args.id);
-      if (handle && handle.process.stdin) {
+      if (handle && handle.process && handle.process.stdin) {
         const msg = { role: "user", content: [{ type: "text", text: args.message }] };
         handle.process.stdin.write(JSON.stringify(msg) + "\n");
         return `Message sent to agent ${args.id}.`;
@@ -80,10 +99,9 @@ export default function(pi: ExtensionAPI) {
   });
 
   // 3. Register Commands
-  pi.registerCommand({
-    name: "agents",
+  pi.registerCommand("agents", {
     description: "List discovered agents",
-    execute: async (args, ctx) => {
+    handler: async (args, ctx) => {
       const agents = discoverAgents(ctx.cwd);
       const list = agents.map(a => `- **${a.name}** (${a.source}): ${a.description}`).join("\n");
       ctx.ui.notify(`Discovered agents:\n${list}`);

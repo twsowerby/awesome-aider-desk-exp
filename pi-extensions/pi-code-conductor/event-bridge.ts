@@ -48,9 +48,9 @@ function processEvent(pi: ExtensionAPI, handle: SubagentHandle, event: any) {
   // Forward to conductor session as a custom message or entry
   // For Wave 1, we'll use a simple notification or status update
   // In a full implementation, we'd use pi.sendMessage or similar to show in UI
-  if (event.type === "tool_execution_start") {
-     pi.ui.setStatus(handle.id, `${handle.agentName}: ${event.toolName}`);
-  }
+  // if (event.type === "tool_execution_start") {
+  //    pi.ui.setStatus(handle.id, `${handle.agentName}: ${event.toolName}`);
+  // }
 }
 
 export function resumeSubagent(pi: ExtensionAPI, handle: SubagentHandle) {

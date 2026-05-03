@@ -22,7 +22,7 @@ export const registry = new Map<string, SubagentHandle>();
 
 export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string, cwd: string): SubagentHandle {
   const id = Math.random().toString(36).substring(7);
-  const args = ["--mode", "json", "--no-session"];
+  const args = ["--mode", "json", "--no-session", "-p"];
   
   if (agent.model) args.push("--model", agent.model);
   if (agent.tools) args.push("--tools", agent.tools.join(","));
@@ -33,15 +33,30 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
   fs.writeFileSync(promptPath, agent.systemPrompt);
   args.push("--append-system-prompt", promptPath);
   
-  // Pass this extension to the child so it has report-result tool and security gate
-  const extensionPath = path.join(__dirname, "index.ts");
+  // Pass the subagent-specific extension to the child
+  const extensionPath = path.join(__dirname, "subagent-extension.ts");
   args.push("--extension", extensionPath);
 
-  const proc = spawn("pi", args, {
-    cwd,
-    stdio: ["pipe", "pipe", "pipe"],
-    shell: false
-  });
+  // Pass the task as a positional argument
+  args.push(task);
+
+  let proc: ChildProcess;
+  try {
+    proc = spawn("pi", args, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false
+    });
+  } catch (err: any) {
+    const errorHandle: any = {
+      id,
+      agentName: agent.name,
+      state: "failed",
+      startedAt: Date.now(),
+      result: { error: `Failed to spawn pi: ${err.message}` }
+    };
+    return errorHandle;
+  }
 
   const handle: SubagentHandle = {
     id,
@@ -55,18 +70,23 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
 
   registry.set(id, handle);
 
-  // Send the task
-  const initialMessage = {
-    role: "user",
-    content: [{ type: "text", text: task }]
-  };
-  proc.stdin?.write(JSON.stringify(initialMessage) + "\n");
-
   forwardEvents(pi, handle);
 
+  proc.on("error", (err) => {
+    handle.state = "failed";
+    handle.result = { error: `Process error: ${err.message}` };
+  });
+
   proc.on("exit", (code) => {
-    handle.state = code === 0 ? "done" : "failed";
+    if (handle.state === "running") {
+      handle.state = code === 0 ? "done" : "failed";
+    }
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    
+    // Cleanup registry after a delay to allow result retrieval
+    setTimeout(() => {
+      registry.delete(id);
+    }, 1000 * 60 * 5); // 5 minutes
   });
 
   return handle;
