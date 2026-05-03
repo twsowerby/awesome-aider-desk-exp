@@ -1,7 +1,7 @@
 ---
 name: conductor
 description: Orchestrates multi-agent workflows by delegating to specialist subagents
-model: claude-sonnet-4-5
+model: z-ai/glm-5.1
 tools: delegate, delegate-chain, pause-agent, resume-agent, steer-agent, abort-agent, update-spec, read-spec, todo-set, todo-get, todo-update, todo-clear, read, bash, grep, find, ls
 ---
 

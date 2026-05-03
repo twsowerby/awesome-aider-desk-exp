@@ -1,7 +1,7 @@
 ---
 name: investigator
 description: Explores codebase, assesses feasibility, and provides detailed findings.
-model: claude-sonnet-4-5
+model: google/gemini-3-flash-preview
 tools: read, bash, grep, find, ls
 output_schema: investigation-result
 ---
