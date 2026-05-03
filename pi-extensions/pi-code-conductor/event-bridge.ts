@@ -10,6 +10,10 @@ export function setGlobalContext(ctx: any) {
   lastCtx = ctx;
 }
 
+export function clearGlobalContext() {
+  lastCtx = null;
+}
+
 export function forwardEvents(pi: ExtensionAPI, handle: SubagentHandle) {
   let buffer = "";
 
@@ -76,7 +80,11 @@ export function resumeSubagent(pi: ExtensionAPI, handle: SubagentHandle) {
 
 export function triggerDashboardUpdate(pi: ExtensionAPI) {
   if (lastCtx && lastCtx.hasUI) {
-    const lines = renderDashboard(registry);
-    lastCtx.ui.setWidget("conductor_dashboard", lines);
+    try {
+      const lines = renderDashboard(registry);
+      lastCtx.ui.setWidget("conductor_dashboard", lines);
+    } catch (e) {
+      // Context might be stale
+    }
   }
 }

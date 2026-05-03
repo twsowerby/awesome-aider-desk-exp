@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ToolCallEvent } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ToolCallEvent, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import * as path from "node:path";
 
 export interface SecurityPolicy {
@@ -95,7 +95,7 @@ function isBashMatch(cmd: string, pattern: string): boolean {
 }
 
 export function createSecurityGate(pi: ExtensionAPI) {
-  pi.on("tool_call", async (event: ToolCallEvent) => {
+  pi.on("tool_call", async (event: ToolCallEvent, ctx: ExtensionContext) => {
     const policy = defaultPolicy; // Future: load from file
     
     if (event.toolName === "bash") {
@@ -104,7 +104,8 @@ export function createSecurityGate(pi: ExtensionAPI) {
         return { block: true, reason: `Blocked dangerous command: ${cmd}` };
       }
       if (policy.confirm_patterns.bash.some(p => isBashMatch(cmd, p))) {
-        const approved = await pi.ui.confirm("Security Confirmation", `Allow command: ${cmd}?`);
+        if (!ctx.hasUI) return { block: true, reason: "Non-interactive mode: blocked sensitive command" };
+        const approved = await ctx.ui.confirm("Security Confirmation", `Allow command: ${cmd}?`);
         if (!approved) return { block: true, reason: "User denied" };
       }
     }
@@ -116,7 +117,8 @@ export function createSecurityGate(pi: ExtensionAPI) {
           return { block: true, reason: `Blocked write to protected path: ${filePath}` };
         }
         if (policy.confirm_patterns.files.some(p => matchesPattern(filePath, p))) {
-          const approved = await pi.ui.confirm("Security Confirmation", `Allow write to ${filePath}?`);
+          if (!ctx.hasUI) return { block: true, reason: "Non-interactive mode: blocked sensitive file access" };
+          const approved = await ctx.ui.confirm("Security Confirmation", `Allow write to ${filePath}?`);
           if (!approved) return { block: true, reason: "User denied" };
         }
       }

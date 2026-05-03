@@ -42,7 +42,15 @@ export async function steerAgent(id: string, message: string, ctx: ExtensionCont
     content: [{ type: "text", text: message }]
   };
 
-  handle.process.stdin.write(JSON.stringify(msg) + "\n");
+  if (!handle.process.stdin.writable) {
+    return `Agent ${id} stdin is not writable.`;
+  }
+
+  try {
+    handle.process.stdin.write(JSON.stringify(msg) + "\n");
+  } catch (err: any) {
+    return `Failed to write to agent ${id} stdin: ${err.message}`;
+  }
   
   if (ctx.hasUI) {
     ctx.ui.notify(`Sent message to agent ${handle.agentName} (${id}).`);

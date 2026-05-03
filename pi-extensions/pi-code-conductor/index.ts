@@ -4,9 +4,9 @@ import { discoverAgents, getAgent } from "./agents.js";
 import { spawnSubagent, cleanupSubagents, registry } from "./subagent-process.js";
 import { createSecurityGate } from "./security-gate.js";
 import { registerResultTools } from "./result-capture.js";
-import { initDashboard, renderDashboard } from "./agent-dashboard.js";
+import { renderDashboard } from "./agent-dashboard.js";
 import { pauseAgent, resumeAgent, steerAgent, abortAgent } from "./pause-steer.js";
-import { setGlobalContext, triggerDashboardUpdate } from "./event-bridge.js";
+import { setGlobalContext, triggerDashboardUpdate, clearGlobalContext } from "./event-bridge.js";
 
 export default function(pi: ExtensionAPI) {
   // 1. Initialize Security Gate
@@ -34,41 +34,14 @@ export default function(pi: ExtensionAPI) {
       const handle = spawnSubagent(pi, agent, args.task, args.cwd || ctx.cwd);
       triggerDashboardUpdate(pi);
       
-      return new Promise((resolve) => {
-        let resolved = false;
-
-        const complete = (result: any) => {
-          if (resolved) return;
-          resolved = true;
-          triggerDashboardUpdate(pi);
-          resolve({
-            content: [{ type: "text", text: typeof result === 'string' ? result : JSON.stringify(result, null, 2) }],
-            details: result
-          });
+      if (signal) {
+        signal.onabort = () => {
+          handle.state = "aborted";
+          handle.process.kill("SIGTERM");
         };
+      }
 
-        if (!handle.process) {
-          complete(handle.result || { error: "Failed to spawn subagent." });
-          return;
-        }
-
-        handle.process.on("error", (err) => {
-          complete({ error: `Subagent process error: ${err.message}` });
-        });
-
-        handle.process.on("exit", (code) => {
-          const result = handle.result || { summary: "Subagent finished without reporting structured result." };
-          complete(result);
-        });
-
-        if (signal) {
-          signal.onabort = () => {
-            handle.state = "aborted";
-            handle.process.kill("SIGTERM");
-            complete({ summary: "Delegation aborted by user." });
-          };
-        }
-      });
+      return await handle.resultPromise;
     }
   });
 
@@ -149,7 +122,6 @@ export default function(pi: ExtensionAPI) {
   // 4. Lifecycle Events
   pi.on("session_shutdown", () => {
     cleanupSubagents();
+    clearGlobalContext();
   });
-
-  initDashboard(pi);
 }

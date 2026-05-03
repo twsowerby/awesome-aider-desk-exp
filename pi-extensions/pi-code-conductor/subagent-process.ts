@@ -2,9 +2,16 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as crypto from "node:crypto";
 import type { AgentConfig } from "./agents.js";
 import { forwardEvents } from "./event-bridge.js";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+
+export interface AgentToolResult {
+  content: { type: string, text: string }[];
+  details?: any;
+  isError?: boolean;
+}
 
 export interface SubagentHandle {
   id: string;
@@ -13,6 +20,7 @@ export interface SubagentHandle {
   state: "running" | "paused" | "done" | "failed" | "aborted";
   startedAt: number;
   result?: any;
+  resultPromise: Promise<AgentToolResult>;
   lastActivity?: string;
   pauseBuffer: any[];
   isPaused: boolean;
@@ -42,26 +50,32 @@ function generateTempSettings(agent: AgentConfig, tmpDir: string): string {
 function generateCustomToolsExtension(agent: AgentConfig, tmpDir: string): string {
   if (!agent.custom_tools?.length) return "";
   
-  const toolRegistrations = agent.custom_tools.map(tool => `
+  const toolsJsonPath = path.join(tmpDir, "tools.json");
+  fs.writeFileSync(toolsJsonPath, JSON.stringify(agent.custom_tools, null, 2));
+  
+  const extensionCode = `
+import { Type } from "@sinclair/typebox";
+import * as fs from "fs";
+import * as path from "path";
+
+export default function(pi) {
+  const configPath = path.join(__dirname, "tools.json");
+  const tools = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  for (const tool of tools) {
     pi.registerTool({
-      name: "${tool.name}",
-      label: "${tool.name}",
-      description: "${tool.description}",
+      name: tool.name,
+      label: tool.name,
+      description: tool.description,
       parameters: Type.Object({ args: Type.Optional(Type.String()) }),
       execute: async (toolCallId, params, signal, onUpdate, ctx) => {
-        const command = "${tool.command}".replace("{{args}}", params.args || "");
+        const command = tool.command.replace("{{args}}", params.args || "");
         const result = await ctx.exec("bash", ["-c", command], { signal });
         return { content: [{ type: "text", text: result.stdout + "\\n" + result.stderr }], details: { command, exitCode: result.exitCode } };
       }
     });
-  `).join("\n");
-  
-  const extensionCode = `
-    import { Type } from "@sinclair/typebox";
-    export default function(pi) {
-      ${toolRegistrations}
-    }
-  `;
+  }
+}
+`;
   
   const extPath = path.join(tmpDir, "custom-tools.ts");
   fs.writeFileSync(extPath, extensionCode);
@@ -70,7 +84,7 @@ function generateCustomToolsExtension(agent: AgentConfig, tmpDir: string): strin
 }
 
 export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string, cwd: string): SubagentHandle {
-  const id = Math.random().toString(36).substring(7);
+  const id = crypto.randomUUID();
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `pi-conductor-${id}-`));
   const tempFiles: string[] = [];
 
@@ -121,17 +135,24 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
       shell: false
     });
   } catch (err: any) {
+    const errorResult: AgentToolResult = { isError: true, content: [{ type: "text", text: `Failed to spawn pi: ${err.message}` }] };
     const errorHandle: any = {
       id,
       agentName: agent.name,
       state: "failed",
       startedAt: Date.now(),
-      result: { error: `Failed to spawn pi: ${err.message}` },
+      result: errorResult,
+      resultPromise: Promise.resolve(errorResult),
       tempFiles: [tmpDir]
     };
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     return errorHandle;
   }
+
+  let resolveResult: (value: AgentToolResult) => void;
+  const resultPromise = new Promise<AgentToolResult>((resolve) => {
+    resolveResult = resolve;
+  });
 
   const handle: SubagentHandle = {
     id,
@@ -139,6 +160,7 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
     process: proc,
     state: "running",
     startedAt: Date.now(),
+    resultPromise,
     pauseBuffer: [],
     isPaused: false,
     tempFiles: [tmpDir]
@@ -150,13 +172,19 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
 
   proc.on("error", (err) => {
     handle.state = "failed";
-    handle.result = { error: `Process error: ${err.message}` };
+    const result = { isError: true, content: [{ type: "text", text: `Process error: ${err.message}` }] };
+    handle.result = result;
+    resolveResult(result);
   });
 
   proc.on("exit", (code) => {
     if (handle.state === "running") {
       handle.state = code === 0 ? "done" : "failed";
     }
+    const result = handle.result || { 
+      content: [{ type: "text", text: handle.state === "done" ? "Subagent finished." : `Subagent exited with code ${code}` }] 
+    };
+    resolveResult(result);
     // Cleanup temp files
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   });
