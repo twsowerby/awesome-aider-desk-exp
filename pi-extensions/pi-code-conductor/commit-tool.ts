@@ -19,7 +19,7 @@ export function registerCommitTool(pi: ExtensionAPI) {
           // 2. Generate message from diff if not provided
           const diffStat = await pi.exec("git", ["diff", "--cached", "--stat"], { cwd: ctx.cwd });
           if (!diffStat.stdout.trim()) {
-            return "No changes to commit.";
+            return { content: [{ type: "text", text: "No changes to commit." }] };
           }
           message = `Update:\n${diffStat.stdout.trim()}`;
         }
@@ -32,7 +32,7 @@ export function registerCommitTool(pi: ExtensionAPI) {
         const revResult = await pi.exec("git", ["rev-parse", "HEAD"], { cwd: ctx.cwd });
         const hash = revResult.stdout.trim().slice(0, 7);
 
-        return `Committed [${hash}]: ${message.split("\n")[0]}`;
+        return { content: [{ type: "text", text: `Committed [${hash}]: ${message.split("\n")[0]}` }] };
       } catch (err: any) {
         return { isError: true, content: [{ type: "text", text: `Commit failed: ${err.message}` }] };
       }

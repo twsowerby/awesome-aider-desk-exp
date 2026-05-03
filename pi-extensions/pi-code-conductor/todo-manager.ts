@@ -39,7 +39,7 @@ export function registerTodoTools(pi: ExtensionAPI) {
       const todoPath = path.join(ctx.cwd, TODO_FILE);
       try {
         fs.writeFileSync(todoPath, JSON.stringify(args, null, 2), "utf-8");
-        return `Todo list set with ${args.items.length} items`;
+        return { content: [{ type: "text", text: `Todo list set with ${args.items.length} items` }] };
       } catch (err: any) {
         return { isError: true, content: [{ type: "text", text: `Failed to set todo list: ${err.message}` }] };
       }
@@ -54,7 +54,7 @@ export function registerTodoTools(pi: ExtensionAPI) {
     execute: async (toolCallId, args, signal, onUpdate, ctx) => {
       const todoPath = path.join(ctx.cwd, TODO_FILE);
       if (!fs.existsSync(todoPath)) {
-        return "No todo list found";
+        return { content: [{ type: "text", text: "No todo list found" }] };
       }
       try {
         const data: TodoList = JSON.parse(fs.readFileSync(todoPath, "utf-8"));
@@ -62,7 +62,7 @@ export function registerTodoTools(pi: ExtensionAPI) {
         data.items.forEach(item => {
           output += `- [${item.completed ? "x" : " "}] ${item.name}\n`;
         });
-        return output;
+        return { content: [{ type: "text", text: output }] };
       } catch (err: any) {
         return { isError: true, content: [{ type: "text", text: `Failed to read todo list: ${err.message}` }] };
       }
@@ -80,17 +80,17 @@ export function registerTodoTools(pi: ExtensionAPI) {
     execute: async (toolCallId, args, signal, onUpdate, ctx) => {
       const todoPath = path.join(ctx.cwd, TODO_FILE);
       if (!fs.existsSync(todoPath)) {
-        return "No todo list found";
+        return { content: [{ type: "text", text: "No todo list found" }] };
       }
       try {
         const data: TodoList = JSON.parse(fs.readFileSync(todoPath, "utf-8"));
         const item = data.items.find(i => i.name === args.name);
         if (!item) {
-          return `Item not found: ${args.name}`;
+          return { content: [{ type: "text", text: `Item not found: ${args.name}` }] };
         }
         item.completed = args.completed;
         fs.writeFileSync(todoPath, JSON.stringify(data, null, 2), "utf-8");
-        return `Updated: ${args.name} -> ${args.completed ? "completed" : "not completed"}`;
+        return { content: [{ type: "text", text: `Updated: ${args.name} -> ${args.completed ? "completed" : "not completed"}` }] };
       } catch (err: any) {
         return { isError: true, content: [{ type: "text", text: `Failed to update todo list: ${err.message}` }] };
       }
@@ -106,9 +106,9 @@ export function registerTodoTools(pi: ExtensionAPI) {
       const todoPath = path.join(ctx.cwd, TODO_FILE);
       if (fs.existsSync(todoPath)) {
         fs.unlinkSync(todoPath);
-        return "Todo list cleared";
+        return { content: [{ type: "text", text: "Todo list cleared" }] };
       }
-      return "No todo list to clear";
+      return { content: [{ type: "text", text: "No todo list to clear" }] };
     }
   });
 }

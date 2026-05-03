@@ -18,7 +18,7 @@ export function registerSpecTools(pi: ExtensionAPI) {
         if (ctx.hasUI) {
           ctx.ui.notify("SPEC.md updated", "info");
         }
-        return "SPEC.md updated successfully";
+        return { content: [{ type: "text", text: "SPEC.md updated successfully" }] };
       } catch (err: any) {
         return { isError: true, content: [{ type: "text", text: `Failed to update SPEC.md: ${err.message}` }] };
       }
@@ -33,11 +33,11 @@ export function registerSpecTools(pi: ExtensionAPI) {
     execute: async (toolCallId, args, signal, onUpdate, ctx) => {
       const specPath = path.join(ctx.cwd, "SPEC.md");
       if (!fs.existsSync(specPath)) {
-        return "No SPEC.md found";
+        return { content: [{ type: "text", text: "No SPEC.md found" }] };
       }
       try {
         const content = fs.readFileSync(specPath, "utf-8");
-        return content;
+        return { content: [{ type: "text", text: content }] };
       } catch (err: any) {
         return { isError: true, content: [{ type: "text", text: `Failed to read SPEC.md: ${err.message}` }] };
       }

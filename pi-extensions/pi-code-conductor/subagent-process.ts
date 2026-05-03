@@ -195,9 +195,17 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
     if (handle.state === "running") {
       handle.state = code === 0 ? "done" : "failed";
     }
-    const result = handle.result || { 
-      content: [{ type: "text", text: handle.state === "done" ? "Subagent finished." : `Subagent exited with code ${code}` }] 
-    };
+    let result: AgentToolResult;
+    if (handle.result?.content) {
+      result = handle.result;
+    } else if (handle.result) {
+      // Handle case where result exists but content is missing/malformed
+      result = { content: [{ type: "text", text: typeof handle.result === "string" ? handle.result : JSON.stringify(handle.result) }] };
+    } else {
+      result = { 
+        content: [{ type: "text", text: handle.state === "done" ? "Subagent finished." : `Subagent exited with code ${code}` }] 
+      };
+    }
     resolveResult(result);
     // Cleanup temp files
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
