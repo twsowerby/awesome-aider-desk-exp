@@ -21,6 +21,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let isConductorMode = false;
 let conductorPrompt = "";
 
+const CONDUCTOR_ALLOWED_TOOLS = new Set([
+  "delegate", "delegate-chain", "update-spec", "read-spec",
+  "todo-set", "todo-get", "todo-update", "todo-clear",
+  "commit", "pause-agent", "resume-agent", "steer-agent", "abort-agent",
+  "report-result"
+]);
+
 async function loadConductorPrompt(): Promise<string> {
   try {
     const agentPath = path.join(__dirname, "agents", "conductor.md");
@@ -37,6 +44,16 @@ async function loadConductorPrompt(): Promise<string> {
 }
 
 export default function(pi: ExtensionAPI) {
+  // 0. Conductor mode enforcement
+  pi.on("tool_call", (event, ctx) => {
+    if (isConductorMode && !CONDUCTOR_ALLOWED_TOOLS.has(event.toolName)) {
+      return {
+        block: true,
+        reason: `Conductor cannot use '${event.toolName}' directly. Delegate this work to a specialist agent using the 'delegate' tool. For example: delegate to investigator to explore code, delegate to implementor to make changes, delegate to reviewer for code review.`
+      };
+    }
+  });
+
   // 1. Initialize Security Gate
   createSecurityGate(pi);
 
@@ -181,7 +198,7 @@ export default function(pi: ExtensionAPI) {
       // Send a message to the agent telling it it's now the conductor
       pi.sendMessage({
         customType: "conductor_activation",
-        content: "Conductor mode activated. You are now the Conductor. Read the conductor system prompt at .pi/agents/conductor.md or use the delegate, update-spec, and todo tools to orchestrate multi-agent workflows. Key rules: (1) Plan before delegating, (2) Create SPEC.md and wait for user approval, (3) Delegate to specialist agents, (4) Run post-implementation pipeline (Verifier → Reviewer).",
+        content: "CONDUCTOR MODE ACTIVE. You are now the Conductor. You plan, delegate, and verify — you NEVER do work yourself. You cannot use read, write, edit, bash, grep, find, or ls. ALL work must be delegated to specialist agents via the 'delegate' tool. When a user asks you to do something, delegate it to the appropriate specialist. Start every task by delegating to the investigator to gather context.",
         display: "⚡ Conductor mode activated",
         details: { mode: "conductor" }
       }, { triggerTurn: true });
@@ -193,11 +210,13 @@ export default function(pi: ExtensionAPI) {
     if (!isConductorMode) return;
 
     const conductorDirective = `
-<ConductorMode>
-You are the Conductor. You plan, delegate, and verify. You NEVER edit files directly.
+<ConductorMode ACTIVE>
+You are the Conductor. You ONLY plan, delegate, and verify. You NEVER do work yourself.
+You CANNOT use: read, write, edit, bash, grep, find, ls. These are BLOCKED.
+You CAN use: delegate, delegate-chain, update-spec, read-spec, todo-*, commit, pause/resume/steer/abort-agent.
+ALL work goes through specialist agents via the 'delegate' tool.
 Available agents: investigator, implementor, verifier, reviewer, critic, debugger, simplifier.
-Workflow: Understand → Plan (create SPEC.md, wait for approval) → Delegate → Review → Verify → Complete.
-Tools: delegate, delegate-chain, update-spec, read-spec, todo-set, todo-get, todo-update, todo-clear, commit.
+Workflow: delegate to investigator first → create SPEC.md → wait for approval → delegate to implementor → verify → review.
 
 ${conductorPrompt}
 </ConductorMode>`;
