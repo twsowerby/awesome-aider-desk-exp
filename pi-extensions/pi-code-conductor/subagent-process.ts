@@ -68,8 +68,22 @@ export default function(pi) {
       description: tool.description,
       parameters: Type.Object({ args: Type.Optional(Type.String()) }),
       execute: async (toolCallId, params, signal, onUpdate, ctx) => {
-        const command = tool.command.replace("{{args}}", params.args || "");
-        const result = await ctx.exec("bash", ["-c", command], { signal });
+        const command = tool.command;
+        let execCmd: string;
+        let execArgs: string[];
+        
+        if (params.args) {
+          const parts = command.split(/\s+/);
+          const argParts = params.args.split(/\s+/);
+          execCmd = parts[0];
+          execArgs = [...parts.slice(1).map(p => p === "{{args}}" ? null : p), ...argParts].filter(p => p !== null) as string[];
+        } else {
+          const parts = command.split(/\s+/);
+          execCmd = parts[0];
+          execArgs = parts.slice(1).filter(p => p !== "{{args}}");
+        }
+        
+        const result = await ctx.exec(execCmd, execArgs, { signal });
         return { content: [{ type: "text", text: result.stdout + "\\n" + result.stderr }], details: { command, exitCode: result.exitCode } };
       }
     });

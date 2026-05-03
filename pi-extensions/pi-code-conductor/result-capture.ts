@@ -35,11 +35,18 @@ export function registerResultTools(pi: ExtensionAPI) {
       if (validationWarning) {
         return {
           isError: false,
-          content: [{ type: "text", text: `Result received with warnings: ${validationWarning}` }]
+          content: [{ type: "text", text: `Result received with warnings: ${validationWarning}` }],
+          data: {
+             ...args.data,
+             _validationWarning: validationWarning
+          }
         };
       }
 
-      return "Result recorded successfully. You may now exit.";
+      return {
+        content: [{ type: "text", text: "Result recorded successfully. You may now exit." }],
+        data: args.data
+      };
     }
   });
 }

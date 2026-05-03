@@ -28,7 +28,7 @@ export function registerChainTools(pi: ExtensionAPI) {
           return { isError: true, content: [{ type: "text", text: `Agent not found: ${step.name}` }] };
         }
 
-        const task = step.task.replace(new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), lastResultText);
+        const task = step.task.replace(new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), () => lastResultText);
         
         if (onUpdate) {
           onUpdate({ type: "progress", message: `Step ${i + 1}/${args.agents.length}: ${step.name}` } as any);

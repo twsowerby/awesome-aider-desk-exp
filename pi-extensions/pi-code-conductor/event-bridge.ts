@@ -58,7 +58,12 @@ function processEvent(pi: ExtensionAPI, handle: SubagentHandle, event: any) {
 
   // Capture result if report-result is called
   if (event.type === "tool_execution_start" && event.toolName === "report-result") {
-    handle.result = event.args;
+    handle.lastActivity = `Reporting result...`;
+    changed = true;
+  }
+
+  if (event.type === "tool_execution_end" && event.toolName === "report-result") {
+    handle.result = event.output;
     handle.state = "done";
     changed = true;
   }

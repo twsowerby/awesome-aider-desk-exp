@@ -47,6 +47,14 @@ export const SimplificationResultSchema = Type.Object({
   complexity_reduction: Type.Optional(Type.String()),
 });
 
+export const CriticResultSchema = Type.Object({
+  completed: Type.Boolean(),
+  summary: Type.String(),
+  feasibility: Type.Optional(Type.String()),
+  risks: Type.Optional(Type.Array(Type.String())),
+  gaps: Type.Optional(Type.Array(Type.String())),
+});
+
 export const OUTPUT_SCHEMAS: Record<string, any> = {
   "investigation-result": InvestigationResultSchema,
   "implementation-result": ImplementationResultSchema,
@@ -54,4 +62,5 @@ export const OUTPUT_SCHEMAS: Record<string, any> = {
   "review-result": ReviewResultSchema,
   "debug-result": DebugResultSchema,
   "simplification-result": SimplificationResultSchema,
+  "critic-result": CriticResultSchema,
 };
