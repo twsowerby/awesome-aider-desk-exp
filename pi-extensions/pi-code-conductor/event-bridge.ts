@@ -71,8 +71,9 @@ function processEvent(pi: ExtensionAPI, handle: SubagentHandle, event: any) {
 
 export function resumeSubagent(pi: ExtensionAPI, handle: SubagentHandle) {
   handle.isPaused = false;
-  while (handle.pauseBuffer.length > 0) {
-    const event = handle.pauseBuffer.shift();
+  const events = [...handle.pauseBuffer];
+  handle.pauseBuffer.length = 0;
+  for (const event of events) {
     processEvent(pi, handle, event);
   }
   triggerDashboardUpdate(pi);
