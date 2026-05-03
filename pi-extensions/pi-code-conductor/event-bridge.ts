@@ -26,6 +26,7 @@ export function forwardEvents(pi: ExtensionAPI, handle: SubagentHandle) {
       if (!line.trim()) continue;
       try {
         const event = JSON.parse(line);
+        handle.eventLog.push(event);
         
         if (handle.isPaused) {
           handle.pauseBuffer.push(event);

@@ -25,7 +25,7 @@ export function renderDashboard(registry: Map<string, SubagentHandle>): string[]
   }
 
   lines.push("│                                                │");
-  lines.push("│ [p] pause  [s] steer  [a] abort  [i] inspect  │");
+  lines.push("│ /pause    /steer    /abort    /inspect         │");
   lines.push("└────────────────────────────────────────────────┘");
 
   return lines;

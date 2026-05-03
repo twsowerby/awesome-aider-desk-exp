@@ -32,8 +32,7 @@ async function loadConductorPrompt(): Promise<string> {
   try {
     const agentPath = path.join(__dirname, "agents", "conductor.md");
     const content = await fs.promises.readFile(agentPath, "utf-8");
-    // Strip the YAML frontmatter (between --- markers) to get just the system prompt body
-    const bodyStart = content.indexOf("---", 4); // find second ---
+    const bodyStart = content.indexOf("---", 4);
     if (bodyStart > 0) {
       return content.substring(bodyStart + 3).trim();
     }
@@ -43,21 +42,33 @@ async function loadConductorPrompt(): Promise<string> {
   }
 }
 
+async function selectAgent(ctx: ExtensionCommandContext): Promise<string | null> {
+  const activeAgents = Array.from(registry.entries()).filter(([_, h]) => h.state === "running" || h.state === "paused");
+  if (activeAgents.length === 0) {
+    ctx.ui.notify("No active subagents.");
+    return null;
+  }
+  if (activeAgents.length === 1) return activeAgents[0][0];
+
+  const options = activeAgents.map(([id, h]) => ({
+    label: `${h.agentName} (${id.substring(0, 8)})`,
+    value: id
+  }));
+
+  return await ctx.ui.select("Select subagent:", options);
+}
+
 export default function(pi: ExtensionAPI) {
-  // 0. Conductor mode enforcement
   pi.on("tool_call", (event, ctx) => {
     if (isConductorMode && !CONDUCTOR_ALLOWED_TOOLS.has(event.toolName)) {
       return {
         block: true,
-        reason: `Conductor cannot use '${event.toolName}' directly. Delegate this work to a specialist agent using the 'delegate' tool. For example: delegate to investigator to explore code, delegate to implementor to make changes, delegate to reviewer for code review.`
+        reason: `Conductor cannot use '${event.toolName}' directly. Delegate this work to a specialist agent using the 'delegate' tool.`
       };
     }
   });
 
-  // 1. Initialize Security Gate
   createSecurityGate(pi);
-
-  // 2. Register Tools
   registerResultTools(pi);
   registerSpecTools(pi);
   registerTodoTools(pi);
@@ -146,7 +157,7 @@ export default function(pi: ExtensionAPI) {
     }
   });
 
-  // 3. Register Commands
+  // Commands
   pi.registerCommand("agents", {
     description: "List discovered agents",
     handler: async (args, ctx) => {
@@ -154,6 +165,82 @@ export default function(pi: ExtensionAPI) {
       const agents = discoverAgents(ctx.cwd);
       const list = agents.map(a => `- **${a.name}** (${a.source}): ${a.description}`).join("\n");
       ctx.ui.notify(`Discovered agents:\n${list}`);
+    }
+  });
+
+  pi.registerCommand("pause", {
+    description: "Pause a running subagent",
+    handler: async (args, ctx) => {
+      setGlobalContext(ctx);
+      const id = await selectAgent(ctx);
+      if (id) {
+        await pauseAgent(id, ctx);
+        triggerDashboardUpdate(pi);
+      }
+    }
+  });
+
+  pi.registerCommand("resume", {
+    description: "Resume a paused subagent",
+    handler: async (args, ctx) => {
+      setGlobalContext(ctx);
+      const id = await selectAgent(ctx);
+      if (id) {
+        await resumeAgent(id, pi, ctx);
+        triggerDashboardUpdate(pi);
+      }
+    }
+  });
+
+  pi.registerCommand("steer", {
+    description: "Send a steering message to a running subagent",
+    handler: async (args, ctx) => {
+      setGlobalContext(ctx);
+      const id = await selectAgent(ctx);
+      if (!id) return;
+      
+      const message = args.trim() || await ctx.ui.input("Enter steering message:");
+      if (message) {
+        await steerAgent(id, message, ctx);
+        triggerDashboardUpdate(pi);
+      }
+    }
+  });
+
+  pi.registerCommand("abort", {
+    description: "Abort a running subagent",
+    handler: async (args, ctx) => {
+      setGlobalContext(ctx);
+      const id = await selectAgent(ctx);
+      if (id) {
+        await abortAgent(id, ctx);
+        triggerDashboardUpdate(pi);
+      }
+    }
+  });
+
+  pi.registerCommand("inspect", {
+    description: "Show detailed output of a subagent",
+    handler: async (args, ctx) => {
+      setGlobalContext(ctx);
+      const options = Array.from(registry.entries()).map(([id, h]) => ({
+        label: `${h.agentName} (${h.state})`,
+        value: id
+      }));
+      
+      if (options.length === 0) {
+        ctx.ui.notify("No agents in registry.");
+        return;
+      }
+      
+      const id = options.length === 1 ? options[0].value : await ctx.ui.select("Inspect agent:", options);
+      if (!id) return;
+      
+      const handle = registry.get(id);
+      if (handle) {
+        const log = handle.eventLog.map(e => JSON.stringify(e)).join("\n");
+        ctx.ui.notify(`Event Log for ${handle.agentName}:\n${log}`);
+      }
     }
   });
 
@@ -169,7 +256,7 @@ export default function(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("code-conductor", {
-    description: "Activate/deactivate conductor mode. Use '/code-conductor' to activate, '/code-conductor off' to deactivate.",
+    description: "Activate/deactivate conductor mode.",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       setGlobalContext(ctx);
       if (args.trim() === "off") {
@@ -180,48 +267,26 @@ export default function(pi: ExtensionAPI) {
       }
       
       isConductorMode = true;
-      
-      // Load the conductor prompt if not already loaded
-      if (!conductorPrompt) {
-        conductorPrompt = await loadConductorPrompt();
-      }
+      if (!conductorPrompt) conductorPrompt = await loadConductorPrompt();
       
       if (ctx.hasUI) {
         ctx.ui.notify("⚡ Conductor mode activated", "info");
         ctx.ui.setStatus("conductor", "⚡ Conductor");
-        
-        // Show dashboard immediately on activation
         const lines = renderDashboard(registry);
         ctx.ui.setWidget("conductor_dashboard", lines);
       }
     }
   });
 
-  // 4. Lifecycle Events
   pi.on("before_agent_start", (event, ctx) => {
     if (!isConductorMode) return;
-
-    const conductorDirective = `
-<ConductorMode ACTIVE>
-You are the Conductor. You ONLY plan, delegate, and verify. You NEVER do work yourself.
-You CANNOT use: read, write, edit, bash, grep, find, ls. These are BLOCKED.
-You CAN use: delegate, delegate-chain, update-spec, read-spec, todo-*, commit, pause/resume/steer/abort-agent.
-ALL work goes through specialist agents via the 'delegate' tool.
-Available agents: investigator, implementor, verifier, reviewer, critic, debugger, simplifier.
-Workflow: delegate to investigator first → create SPEC.md → wait for approval → delegate to implementor → verify → review.
-
-${conductorPrompt}
-</ConductorMode>`;
-
-    return {
-      systemPrompt: (event.systemPrompt || "") + conductorDirective
-    };
+    const conductorDirective = `\n<ConductorMode ACTIVE>\n${conductorPrompt}\n</ConductorMode>`;
+    return { systemPrompt: (event.systemPrompt || "") + conductorDirective };
   });
 
   pi.on("session_shutdown", () => {
     cleanupSubagents();
     clearGlobalContext();
     isConductorMode = false;
-    conductorPrompt = "";
   });
 }

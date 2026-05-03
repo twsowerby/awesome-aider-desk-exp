@@ -25,12 +25,16 @@ export interface SubagentHandle {
   pauseBuffer: any[];
   isPaused: boolean;
   tempFiles: string[];
+  eventLog: any[];
 }
 
 export const registry = new Map<string, SubagentHandle>();
 
 function generateTempSettings(agent: AgentConfig, tmpDir: string): string {
   if (!agent.mcp_servers?.length) return "";
+  
+  const tmpAgentDir = path.join(tmpDir, "pi-agent-dir");
+  fs.mkdirSync(tmpAgentDir, { recursive: true });
   
   const settings = {
     mcpServers: Object.fromEntries(
@@ -41,10 +45,10 @@ function generateTempSettings(agent: AgentConfig, tmpDir: string): string {
     )
   };
   
-  const settingsPath = path.join(tmpDir, "settings.json");
+  const settingsPath = path.join(tmpAgentDir, "settings.json");
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
   
-  return settingsPath;
+  return tmpAgentDir;
 }
 
 function generateCustomToolsExtension(agent: AgentConfig, tmpDir: string): string {
@@ -73,12 +77,12 @@ export default function(pi) {
         let execArgs: string[];
         
         if (params.args) {
-          const parts = command.split(/\s+/);
-          const argParts = params.args.split(/\s+/);
+          const parts = command.split(/\\s+/);
+          const argParts = params.args.split(/\\s+/);
           execCmd = parts[0];
           execArgs = [...parts.slice(1).map(p => p === "{{args}}" ? null : p), ...argParts].filter(p => p !== null) as string[];
         } else {
-          const parts = command.split(/\s+/);
+          const parts = command.split(/\\s+/);
           execCmd = parts[0];
           execArgs = parts.slice(1).filter(p => p !== "{{args}}");
         }
@@ -100,52 +104,48 @@ export default function(pi) {
 export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string, cwd: string): SubagentHandle {
   const id = crypto.randomUUID();
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `pi-conductor-${id}-`));
-  const tempFiles: string[] = [];
+  const env = { ...process.env };
 
-  const args = ["--mode", "json", "--no-session", "-p"];
+  const args = ["--mode", "json", "-p", "--no-session"];
   
   if (agent.model) {
     args.push("--model", agent.model);
   }
   
-  if (agent.tools) {
+  if (agent.tools?.length) {
     args.push("--tools", agent.tools.join(","));
   }
 
-  // MCP Settings
-  const settingsPath = generateTempSettings(agent, tmpDir);
-  if (settingsPath) {
-    args.push("--settings", settingsPath);
-    tempFiles.push(settingsPath);
+  // MCP Settings via PI_AGENT_DIR
+  const tmpAgentDir = generateTempSettings(agent, tmpDir);
+  if (tmpAgentDir) {
+    env.PI_AGENT_DIR = tmpAgentDir;
   }
 
   // Custom Tools Extension
   const customToolsExtPath = generateCustomToolsExtension(agent, tmpDir);
   if (customToolsExtPath) {
     args.push("--extension", customToolsExtPath);
-    tempFiles.push(customToolsExtPath);
   }
   
-  // System Prompt
-  const promptPath = path.join(tmpDir, "system.md");
+  // System Prompt (from file)
+  const promptPath = path.join(tmpDir, "system-prompt.md");
   fs.writeFileSync(promptPath, agent.systemPrompt);
   args.push("--append-system-prompt", promptPath);
-  tempFiles.push(promptPath);
   
   // Main Subagent Extension
-  // In a real environment, __dirname might not be reliable if bundled, 
-  // but for this task we assume it works.
   const extensionPath = path.join(__dirname, "subagent-extension.ts");
   args.push("--extension", extensionPath);
 
-  // Initial Task
-  args.push(task);
+  // Initial Task as positional argument
+  args.push(`Task: ${task}`);
 
   let proc: ChildProcess;
   try {
     proc = spawn("pi", args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
+      env,
       shell: false
     });
   } catch (err: any) {
@@ -157,7 +157,8 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
       startedAt: Date.now(),
       result: errorResult,
       resultPromise: Promise.resolve(errorResult),
-      tempFiles: [tmpDir]
+      tempFiles: [tmpDir],
+      eventLog: []
     };
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     return errorHandle;
@@ -177,7 +178,8 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
     resultPromise,
     pauseBuffer: [],
     isPaused: false,
-    tempFiles: [tmpDir]
+    tempFiles: [tmpDir],
+    eventLog: []
   };
 
   registry.set(id, handle);
@@ -199,7 +201,6 @@ export function spawnSubagent(pi: ExtensionAPI, agent: AgentConfig, task: string
     if (handle.result?.content) {
       result = handle.result;
     } else if (handle.result) {
-      // Handle case where result exists but content is missing/malformed
       result = { content: [{ type: "text", text: typeof handle.result === "string" ? handle.result : JSON.stringify(handle.result) }] };
     } else {
       result = { 
@@ -219,7 +220,6 @@ export function cleanupSubagents() {
     if (handle.state === "running") {
       handle.process.kill("SIGTERM");
     }
-    // Final cleanup of temp files if any
     for (const fileOrDir of handle.tempFiles) {
       try { fs.rmSync(fileOrDir, { recursive: true, force: true }); } catch {}
     }
