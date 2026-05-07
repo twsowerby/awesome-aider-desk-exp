@@ -2,6 +2,9 @@ import type { PromptTemplateEvent, ExtensionContext } from '@aiderdesk/extension
 import { CONDUCTOR_AGENT_IDS } from './agent-configs';
 
 // Sections to REMOVE from the system prompt (behavioral, agent-specific)
+// Note: ExtensionTools is NOT included here because it's a structural section
+// (like PowerTools, ToolUsageGuidelines) injected during onAgentStarted.
+// It should survive the strip phase.
 const BEHAVIORAL_SECTIONS = [
   'Objective',
   'Persona', 

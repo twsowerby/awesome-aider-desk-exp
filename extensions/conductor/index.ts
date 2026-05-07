@@ -121,7 +121,7 @@ function resolveSpecDir(ctx: ExtensionContext): string {
   return path.join(ctx.getProjectDir(), '.aider-desk', 'tasks', taskId);
 }
 
-function loadAgents(extensionDir: string, configDefaults: AgentDefaults, delegationMode: string, localAgentOverrides?: Record<string, Record<string, unknown>>): AgentProfile[] {
+function loadAgents(extensionDir: string, configDefaults: AgentDefaults, delegationMode: string, localAgentOverrides?: Record<string, Record<string, unknown>>): ConductorAgentProfile[] {
   const agentsDir = path.join(extensionDir, 'agents');
   const configPath = path.join(agentsDir, 'index.json');
 
@@ -154,7 +154,7 @@ function loadAgents(extensionDir: string, configDefaults: AgentDefaults, delegat
       name: entry.name,
       customInstructions: instructions,
       subagent: entry.subagent
-    } as AgentProfile;
+    } as ConductorAgentProfile;
   });
 }
 
@@ -393,7 +393,7 @@ export default class ConductorExtension implements Extension {
     capabilities: ['agents', 'tools', 'ui']
   };
 
-  private agents: AgentProfile[] = [];
+  private agents: ConductorAgentProfile[] = [];
   private agentsConfig!: AgentsConfig;
   private config!: ConductorConfig;
   private baseConfig!: ConductorConfig;
@@ -613,8 +613,8 @@ export default class ConductorExtension implements Extension {
     const delegateToolName = DELEGATE_TOOLS[this.config.delegationMode] ?? this.config.delegationMode;
 
     // Find the conductor agent profile to get extensionTools
-    const conductorProfile = this.agents.find(a => a.id === agentId);
-    const extensionTools = (conductorProfile as ConductorAgentProfile)?.extensionTools;
+    const agentProfile = this.agents.find(a => a.id === agentId);
+    const extensionTools = agentProfile?.extensionTools;
 
     // Delegate prompt injection to the inject module
     const promptResult = await handleAgentStarted(event, context, { 
@@ -622,7 +622,6 @@ export default class ConductorExtension implements Extension {
       extensionTools 
     });
 
-    const conductorAgent = this.agents.find(a => a.id === agentId);
     const result: Partial<AgentStartedEvent> = {};
 
     // If prompt injection returned a result, merge it
@@ -631,9 +630,9 @@ export default class ConductorExtension implements Extension {
     }
 
     // Correct enabledServers if needed
-    if (conductorAgent) {
+    if (agentProfile) {
       const currentServers = event.agentProfile.enabledServers || [];
-      const expectedServers = conductorAgent.enabledServers || [];
+      const expectedServers = agentProfile.enabledServers || [];
 
       if (JSON.stringify(currentServers) !== JSON.stringify(expectedServers)) {
         result.agentProfile = { ...event.agentProfile, ...result.agentProfile, enabledServers: expectedServers };
