@@ -1,11 +1,6 @@
 import type { AgentStartedEvent, AgentProfile, ExtensionContext } from '@aiderdesk/extensions';
 import { AGENT_CONFIGS } from './agent-configs';
-
-interface ExtensionToolGroup {
-  id: string;
-  prefix: string;
-  description: string;
-}
+import type { ExtensionToolGroup } from './types';
 
 function resolvePlaceholders(text: string, delegateToolName: string): string {
   return text.replace(/\{\{DELEGATE_TOOL\}\}/g, delegateToolName);
@@ -79,9 +74,9 @@ ${escapedNotes}
   // ExtensionTools
   if (extensionTools && extensionTools.length > 0) {
     const groups = extensionTools.map(g => 
-      `  <ToolGroup id="${escapeXml(g.id)}" prefix="${escapeXml(g.prefix)}">\n    ${escapeXml(g.description)}\n  </ToolGroup>`
+      `    <ToolGroup id="${escapeXml(g.id)}" prefix="${escapeXml(g.prefix)}">\n      ${escapeXml(g.description)}\n    </ToolGroup>`
     ).join('\n');
-    sections.push(`<ExtensionTools>\n${groups}\n</ExtensionTools>`);
+    sections.push(`  <ExtensionTools>\n${groups}\n  </ExtensionTools>`);
   }
 
   const fullPrompt = sections.join('\n\n');
