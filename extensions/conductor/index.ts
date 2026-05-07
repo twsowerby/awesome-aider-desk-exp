@@ -171,37 +171,58 @@ const DELEGATE_TOOLS: Record<string, string> = {
 const MAX_TOOL_OUTPUT_CHARS = 10000; // Primary truncation limit
 const HARD_LIMIT_CHARS = 50000; // Safety net hard limit
 
-interface ToolResult {
-  content: Array<
-    | { type: 'text'; text: string }
-    | { type: 'image'; source: unknown }
-  >;
-  details?: Record<string, unknown>;
-  isError?: boolean;
-}
-
 function truncateToolOutput(output: any, limit: number): any {
   if (!output) return output;
 
-  // Handle ToolResult object
+  // Handle ToolResult object { content: [...], isError?: boolean }
   if (typeof output === 'object' && Array.isArray(output.content)) {
     // Skip truncation for errors
     if (output.isError) return output;
 
     let modified = false;
     const newContent = output.content.map((item: any) => {
-      if (item.type === 'text' && typeof item.text === 'string' && item.text.length > limit) {
+      // Skip error-type content parts (ToolResultOutput error formats)
+      if (item.type === 'error-text' || item.type === 'error-json') return item;
+
+      // Support both ToolResult format (.text) and ToolResultOutput format (.value)
+      const textContent = item.text ?? (item.type === 'text' || item.type === 'json' || item.type === 'content' ? item.value : undefined);
+      if (typeof textContent === 'string' && textContent.length > limit) {
         modified = true;
-        const originalLength = item.text.length;
-        return {
-          ...item,
-          text: item.text.slice(0, limit) + `\n\n[Output truncated at ${limit} chars — original was ${originalLength} chars. Use a more specific query to narrow results.]`
-        };
+        const originalLength = textContent.length;
+        const truncated = textContent.slice(0, limit) + `\n\n[Output truncated at ${limit} chars — original was ${originalLength} chars. Use a more specific query to narrow results.]`;
+        // Preserve the original field name
+        if ('text' in item) {
+          return { ...item, text: truncated };
+        }
+        return { ...item, value: truncated };
       }
       return item;
     });
 
     return modified ? { ...output, content: newContent } : output;
+  }
+
+  // Handle plain array of content parts (e.g., message content arrays)
+  if (Array.isArray(output)) {
+    let modified = false;
+    const newContent = output.map((item: any) => {
+      // Skip error-type content parts
+      if (item?.type === 'error-text' || item?.type === 'error-json') return item;
+
+      const textContent = item?.text ?? (item?.type === 'text' || item?.type === 'json' || item?.type === 'content' ? item?.value : undefined);
+      if (typeof textContent === 'string' && textContent.length > limit) {
+        modified = true;
+        const originalLength = textContent.length;
+        const truncated = textContent.slice(0, limit) + `\n\n[Output truncated at ${limit} chars — original was ${originalLength} chars. Use a more specific query to narrow results.]`;
+        if (item && 'text' in item) {
+          return { ...item, text: truncated };
+        }
+        return { ...item, value: truncated };
+      }
+      return item;
+    });
+
+    return modified ? newContent : output;
   }
 
   // Handle plain string
@@ -211,6 +232,25 @@ function truncateToolOutput(output: any, limit: number): any {
   }
 
   return output;
+}
+
+/**
+ * Efficiently estimates the character length of message content without JSON.stringify.
+ */
+function estimateContentLength(content: unknown): number {
+  if (typeof content === 'string') return content.length;
+  if (Array.isArray(content)) {
+    return content.reduce((sum: number, item: any) => {
+      if (typeof item === 'string') return sum + item.length;
+      if (item?.text) return sum + item.text.length;
+      if (item?.value && typeof item.value === 'string') return sum + item.value.length;
+      return sum;
+    }, 0);
+  }
+  if (content && typeof content === 'object' && (content as any).content) {
+    return estimateContentLength((content as any).content);
+  }
+  return 0;
 }
 
 function applyModePlaceholders(instructions: string, mode: string): string {
@@ -627,19 +667,23 @@ export default class ConductorExtension implements Extension {
   async onOptimizeMessages(event: OptimizeMessagesEvent, _context: ExtensionContext): Promise<Partial<OptimizeMessagesEvent> | void> {
     let modified = false;
     const messages = event.optimizedMessages.map(msg => {
-      const contentStr = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      const contentLength = estimateContentLength(msg.content);
 
-      if (contentStr.length > HARD_LIMIT_CHARS) {
+      if (contentLength > HARD_LIMIT_CHARS) {
         modified = true;
         if (typeof msg.content === 'string') {
           return {
             ...msg,
             content: msg.content.slice(0, HARD_LIMIT_CHARS) + `\n\n[Hard limit truncation at ${HARD_LIMIT_CHARS} chars]`
           };
-        } else {
-          // For structured content, try to truncate text parts
+        } else if (Array.isArray(msg.content)) {
+          // For array content, truncate in place
           const truncatedContent = truncateToolOutput(msg.content, HARD_LIMIT_CHARS);
           return { ...msg, content: truncatedContent };
+        } else if (typeof msg.content === 'object' && msg.content !== null) {
+          // For ToolResult-like objects, wrap for truncation then extract content back
+          const wrapped = truncateToolOutput({ content: (msg.content as any).content ?? msg.content }, HARD_LIMIT_CHARS);
+          return { ...msg, content: wrapped.content ?? wrapped };
         }
       }
       return msg;
