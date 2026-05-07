@@ -1,6 +1,12 @@
 import type { AgentStartedEvent, AgentProfile, ExtensionContext } from '@aiderdesk/extensions';
 import { AGENT_CONFIGS } from './agent-configs';
 
+interface ExtensionToolGroup {
+  id: string;
+  prefix: string;
+  description: string;
+}
+
 function resolvePlaceholders(text: string, delegateToolName: string): string {
   return text.replace(/\{\{DELEGATE_TOOL\}\}/g, delegateToolName);
 }
@@ -9,7 +15,7 @@ function escapeXml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function buildAgentPrompt(profile: AgentProfile, delegateToolName: string = 'delegate-to-agent'): string {
+function buildAgentPrompt(profile: AgentProfile, delegateToolName: string = 'delegate-to-agent', extensionTools?: ExtensionToolGroup[]): string {
   const config = AGENT_CONFIGS[profile.id];
   if (!config) return '';
 
@@ -70,6 +76,14 @@ ${escapedNotes}
 ]]></CustomInstructions>
   </Knowledge>`);
 
+  // ExtensionTools
+  if (extensionTools && extensionTools.length > 0) {
+    const groups = extensionTools.map(g => 
+      `  <ToolGroup id="${escapeXml(g.id)}" prefix="${escapeXml(g.prefix)}">\n    ${escapeXml(g.description)}\n  </ToolGroup>`
+    ).join('\n');
+    sections.push(`<ExtensionTools>\n${groups}\n</ExtensionTools>`);
+  }
+
   const fullPrompt = sections.join('\n\n');
   return resolvePlaceholders('\n\n' + fullPrompt, delegateToolName);
 }
@@ -89,10 +103,11 @@ function insertBeforeClosingTag(prompt: string, content: string): string {
 export async function handleAgentStarted(
   event: AgentStartedEvent,
   context: ExtensionContext,
-  options?: { delegateToolName?: string }
+  options?: { delegateToolName?: string; extensionTools?: ExtensionToolGroup[] }
 ): Promise<void | Partial<AgentStartedEvent>> {
   const delegateToolName = options?.delegateToolName ?? 'delegate-to-agent';
-  const agentPrompt = buildAgentPrompt(event.agentProfile, delegateToolName);
+  const extensionTools = options?.extensionTools;
+  const agentPrompt = buildAgentPrompt(event.agentProfile, delegateToolName, extensionTools);
   if (!agentPrompt) return;
 
   const basePrompt = event.systemPrompt ?? '';

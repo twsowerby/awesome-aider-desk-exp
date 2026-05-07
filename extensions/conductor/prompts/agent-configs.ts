@@ -163,6 +163,9 @@ The \`{{DELEGATE_TOOL}}\` tool returns the results directly in its response. **R
       { id: "prioritize-tools", text: "Exhaust tool capabilities before asking the user." }
     ],
     workflow: `<Workflow>
+  <Step number="0" title="Tool Review">
+    <Instruction>Before planning your approach, review the tools available to you — especially any extension tools listed in &lt;ExtensionTools&gt;. Prefer direct tool usage over indirect workarounds.</Instruction>
+  </Step>
   <Step number="1" title="Repo Map">
     <Instruction>Start with the repo map to understand overall structure.</Instruction>
   </Step>
@@ -238,6 +241,9 @@ Specific suggestions for how to approach the implementation.`
       { id: "follow-patterns", text: "Follow existing code patterns, naming conventions, and project structure precisely." }
     ],
     workflow: `<Workflow>
+  <Step number="0" title="Tool Review">
+    <Instruction>Before planning your approach, review the tools available to you — especially any extension tools listed in &lt;ExtensionTools&gt;. Prefer direct tool usage over indirect workarounds.</Instruction>
+  </Step>
   <Step number="1" title="Understand">
     <Instruction>Read and understand the task description completely.</Instruction>
   </Step>
@@ -308,6 +314,9 @@ When complete, provide:
       { id: "report-failures", text: "Report every failure with specific details: what was expected, what was found, and the file/line involved." }
     ],
     workflow: `<Workflow>
+  <Step number="0" title="Tool Review">
+    <Instruction>Before planning your approach, review the tools available to you — especially any extension tools listed in &lt;ExtensionTools&gt;. Prefer direct tool usage over indirect workarounds.</Instruction>
+  </Step>
   <Step number="1" title="Understand">
     <Instruction>Read the task description / acceptance criteria provided. Confirm criteria are specific and testable.</Instruction>
   </Step>
@@ -378,6 +387,9 @@ Non-blocking improvements outside acceptance criteria.`
       { id: "challenge-assumptions", text: "Question assumptions and propose alternatives where the approach may fail." }
     ],
     workflow: `<Workflow>
+  <Step number="0" title="Tool Review">
+    <Instruction>Before planning your approach, review the tools available to you — especially any extension tools listed in &lt;ExtensionTools&gt;. Prefer direct tool usage over indirect workarounds.</Instruction>
+  </Step>
   <Step number="1" title="Read">
     <Instruction>Read the spec/plan thoroughly.</Instruction>
   </Step>
@@ -439,6 +451,9 @@ What's good about the plan (brief).`
       { id: "minimal-fix", text: "Apply the minimal fix that addresses the root cause. Do not refactor or make unrelated changes." }
     ],
     workflow: `<Workflow>
+  <Step number="0" title="Tool Review">
+    <Instruction>Before planning your approach, review the tools available to you — especially any extension tools listed in &lt;ExtensionTools&gt;. Prefer direct tool usage over indirect workarounds.</Instruction>
+  </Step>
   <Step number="1" title="Reproduce">
     <Instruction>Understand the bug report. Identify expected vs actual behavior. Find relevant code paths.</Instruction>
   </Step>
@@ -506,6 +521,9 @@ What's good about the plan (brief).`
       { id: "actionable-feedback", text: "Provide specific, actionable feedback. Cite the file, line, and what should change." }
     ],
     workflow: `<Workflow>
+  <Step number="0" title="Tool Review">
+    <Instruction>Before planning your approach, review the tools available to you — especially any extension tools listed in &lt;ExtensionTools&gt;. Prefer direct tool usage over indirect workarounds.</Instruction>
+  </Step>
   <Step number="1" title="Read">
     <Instruction>Read the changed files / diff. Understand the purpose of changes.</Instruction>
   </Step>
@@ -585,6 +603,9 @@ If no issues found, output: "✅ Approved — no high-confidence issues found."`
       { id: "preserve-behavior", text: "All simplifications must preserve exact existing behavior. Verify with tests." }
     ],
     workflow: `<Workflow>
+  <Step number="0" title="Tool Review">
+    <Instruction>Before planning your approach, review the tools available to you — especially any extension tools listed in &lt;ExtensionTools&gt;. Prefer direct tool usage over indirect workarounds.</Instruction>
+  </Step>
   <Step number="1" title="Identify">
     <Instruction>Identify the recently modified code sections.</Instruction>
   </Step>

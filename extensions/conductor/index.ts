@@ -22,9 +22,16 @@ import { handlePromptTemplate } from './prompts/strip';
 import { handleAgentStarted } from './prompts/inject';
 
 /** Extended profile that includes commit-specific model config. These fields are injected at runtime by loadAgents() spreading AgentDefaults, which is why they require a cast. */
+interface ExtensionToolGroup {
+  id: string;           // e.g., "supabase"
+  prefix: string;       // e.g., "supabase---"
+  description: string;  // Domain description for LLM awareness
+}
+
 interface ConductorAgentProfile extends AgentProfile {
   commitProvider?: string;
   commitModel?: string;
+  extensionTools?: ExtensionToolGroup[];
 }
 
 interface AgentConfigEntry {
@@ -617,8 +624,15 @@ export default class ConductorExtension implements Extension {
 
     const delegateToolName = DELEGATE_TOOLS[this.config.delegationMode] ?? this.config.delegationMode;
 
+    // Find the conductor agent profile to get extensionTools
+    const conductorProfile = this.agents.find(a => a.id === agentId);
+    const extensionTools = (conductorProfile as ConductorAgentProfile)?.extensionTools;
+
     // Delegate prompt injection to the inject module
-    const promptResult = await handleAgentStarted(event, context, { delegateToolName });
+    const promptResult = await handleAgentStarted(event, context, { 
+      delegateToolName,
+      extensionTools 
+    });
 
     const conductorAgent = this.agents.find(a => a.id === agentId);
     const result: Partial<AgentStartedEvent> = {};
