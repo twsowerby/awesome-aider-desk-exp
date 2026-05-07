@@ -2,12 +2,15 @@ import type {
   AgentProfile,
   AgentStartedEvent,
   AgentStepFinishedEvent,
+  ContextMessage,
   Extension,
   ExtensionContext,
   ImportantRemindersEvent,
+  OptimizeMessagesEvent,
   PromptTemplateEvent,
   SubagentFinishedEvent,
   ToolDefinition,
+  ToolFinishedEvent,
   UIComponentDefinition
 } from '@aiderdesk/extensions';
 import { exec, execSync } from 'child_process';
@@ -164,6 +167,51 @@ const DELEGATE_TOOLS: Record<string, string> = {
   subtask: 'delegate-to-agent',
   subagent: 'subagents---run_task'
 };
+
+const MAX_TOOL_OUTPUT_CHARS = 10000; // Primary truncation limit
+const HARD_LIMIT_CHARS = 50000; // Safety net hard limit
+
+interface ToolResult {
+  content: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image'; source: unknown }
+  >;
+  details?: Record<string, unknown>;
+  isError?: boolean;
+}
+
+function truncateToolOutput(output: any, limit: number): any {
+  if (!output) return output;
+
+  // Handle ToolResult object
+  if (typeof output === 'object' && Array.isArray(output.content)) {
+    // Skip truncation for errors
+    if (output.isError) return output;
+
+    let modified = false;
+    const newContent = output.content.map((item: any) => {
+      if (item.type === 'text' && typeof item.text === 'string' && item.text.length > limit) {
+        modified = true;
+        const originalLength = item.text.length;
+        return {
+          ...item,
+          text: item.text.slice(0, limit) + `\n\n[Output truncated at ${limit} chars — original was ${originalLength} chars. Use a more specific query to narrow results.]`
+        };
+      }
+      return item;
+    });
+
+    return modified ? { ...output, content: newContent } : output;
+  }
+
+  // Handle plain string
+  if (typeof output === 'string' && output.length > limit) {
+    const originalLength = output.length;
+    return output.slice(0, limit) + `\n\n[Output truncated at ${limit} chars — original was ${originalLength} chars. Use a more specific query to narrow results.]`;
+  }
+
+  return output;
+}
 
 function applyModePlaceholders(instructions: string, mode: string): string {
   const tool = DELEGATE_TOOLS[mode] ?? mode;
@@ -567,6 +615,39 @@ export default class ConductorExtension implements Extension {
 
   async onPromptTemplate(event: PromptTemplateEvent, context: ExtensionContext): Promise<Partial<PromptTemplateEvent> | void> {
     return handlePromptTemplate(event, context);
+  }
+
+  async onToolFinished(event: ToolFinishedEvent, _context: ExtensionContext): Promise<Partial<ToolFinishedEvent> | void> {
+    const truncated = truncateToolOutput(event.output, MAX_TOOL_OUTPUT_CHARS);
+    if (truncated !== event.output) {
+      return { output: truncated };
+    }
+  }
+
+  async onOptimizeMessages(event: OptimizeMessagesEvent, _context: ExtensionContext): Promise<Partial<OptimizeMessagesEvent> | void> {
+    let modified = false;
+    const messages = event.optimizedMessages.map(msg => {
+      const contentStr = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+
+      if (contentStr.length > HARD_LIMIT_CHARS) {
+        modified = true;
+        if (typeof msg.content === 'string') {
+          return {
+            ...msg,
+            content: msg.content.slice(0, HARD_LIMIT_CHARS) + `\n\n[Hard limit truncation at ${HARD_LIMIT_CHARS} chars]`
+          };
+        } else {
+          // For structured content, try to truncate text parts
+          const truncatedContent = truncateToolOutput(msg.content, HARD_LIMIT_CHARS);
+          return { ...msg, content: truncatedContent };
+        }
+      }
+      return msg;
+    });
+
+    if (modified) {
+      return { optimizedMessages: messages };
+    }
   }
 
   private async persistAgentOverride(context: ExtensionContext, agentId: string, updatedProfile: AgentProfile): Promise<void> {
