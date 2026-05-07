@@ -182,19 +182,34 @@ function truncateToolOutput(output: any, limit: number): any {
     let modified = false;
     const newContent = output.content.map((item: any) => {
       // Skip error-type content parts (ToolResultOutput error formats)
-      if (item.type === 'error-text' || item.type === 'error-json') return item;
+      if (item?.type === 'error-text' || item?.type === 'error-json') return item;
+
+      // Recurse into ToolResultPart.output if it exists
+      if (item?.output) {
+        const truncatedOutput = truncateToolOutput(item.output, limit);
+        if (truncatedOutput !== item.output) {
+          modified = true;
+          return { ...item, output: truncatedOutput };
+        }
+        return item;
+      }
 
       // Support both ToolResult format (.text) and ToolResultOutput format (.value)
-      const textContent = item.text ?? (item.type === 'text' || item.type === 'json' || item.type === 'content' ? item.value : undefined);
-      if (typeof textContent === 'string' && textContent.length > limit) {
-        modified = true;
-        const originalLength = textContent.length;
-        const truncated = textContent.slice(0, limit) + `\n\n[Output truncated at ${limit} chars — original was ${originalLength} chars. Use a more specific query to narrow results.]`;
-        // Preserve the original field name
-        if ('text' in item) {
-          return { ...item, text: truncated };
+      const isStringifiable = item?.type === 'json' || item?.type === 'content';
+      const textContent = item?.text ?? (item?.type === 'text' || isStringifiable ? item?.value : undefined);
+
+      if (textContent !== undefined && textContent !== null) {
+        const stringVal = typeof textContent === 'string' ? textContent : JSON.stringify(textContent);
+        if (stringVal.length > limit) {
+          modified = true;
+          const originalLength = stringVal.length;
+          const truncated = stringVal.slice(0, limit) + `\n\n[Output truncated at ${limit} chars — original was ${originalLength} chars. Use a more specific query to narrow results.]`;
+          // Preserve the original field name
+          if (item && 'text' in item) {
+            return { ...item, text: truncated };
+          }
+          return { ...item, value: truncated };
         }
-        return { ...item, value: truncated };
       }
       return item;
     });
@@ -209,15 +224,30 @@ function truncateToolOutput(output: any, limit: number): any {
       // Skip error-type content parts
       if (item?.type === 'error-text' || item?.type === 'error-json') return item;
 
-      const textContent = item?.text ?? (item?.type === 'text' || item?.type === 'json' || item?.type === 'content' ? item?.value : undefined);
-      if (typeof textContent === 'string' && textContent.length > limit) {
-        modified = true;
-        const originalLength = textContent.length;
-        const truncated = textContent.slice(0, limit) + `\n\n[Output truncated at ${limit} chars — original was ${originalLength} chars. Use a more specific query to narrow results.]`;
-        if (item && 'text' in item) {
-          return { ...item, text: truncated };
+      // Recurse into ToolResultPart.output if it exists
+      if (item?.output) {
+        const truncatedOutput = truncateToolOutput(item.output, limit);
+        if (truncatedOutput !== item.output) {
+          modified = true;
+          return { ...item, output: truncatedOutput };
         }
-        return { ...item, value: truncated };
+        return item;
+      }
+
+      const isStringifiable = item?.type === 'json' || item?.type === 'content';
+      const textContent = item?.text ?? (item?.type === 'text' || isStringifiable ? item?.value : undefined);
+
+      if (textContent !== undefined && textContent !== null) {
+        const stringVal = typeof textContent === 'string' ? textContent : JSON.stringify(textContent);
+        if (stringVal.length > limit) {
+          modified = true;
+          const originalLength = stringVal.length;
+          const truncated = stringVal.slice(0, limit) + `\n\n[Output truncated at ${limit} chars — original was ${originalLength} chars. Use a more specific query to narrow results.]`;
+          if (item && 'text' in item) {
+            return { ...item, text: truncated };
+          }
+          return { ...item, value: truncated };
+        }
       }
       return item;
     });
@@ -241,14 +271,24 @@ function estimateContentLength(content: unknown): number {
   if (typeof content === 'string') return content.length;
   if (Array.isArray(content)) {
     return content.reduce((sum: number, item: any) => {
+      if (!item) return sum;
       if (typeof item === 'string') return sum + item.length;
-      if (item?.text) return sum + item.text.length;
-      if (item?.value && typeof item.value === 'string') return sum + item.value.length;
+      if (item.output) return sum + estimateContentLength(item.output);
+      if (item.text) return sum + item.text.length;
+      if (item.value) {
+        if (typeof item.value === 'string') return sum + item.value.length;
+        return sum + JSON.stringify(item.value).length;
+      }
       return sum;
     }, 0);
   }
-  if (content && typeof content === 'object' && (content as any).content) {
-    return estimateContentLength((content as any).content);
+  if (content && typeof content === 'object') {
+    const obj = content as any;
+    if (obj.content) return estimateContentLength(obj.content);
+    if (obj.value) {
+      if (typeof obj.value === 'string') return obj.value.length;
+      return JSON.stringify(obj.value).length;
+    }
   }
   return 0;
 }
